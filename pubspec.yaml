@@ -1,0 +1,94 @@
+name: assana
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.10.0-290.4.beta
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.2.2
+  flutter_svg: ^2.0.9
+  google_fonts: ^6.1.0
+  image_picker: ^1.0.7
+  dio: ^5.4.0
+  cached_network_image: ^3.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/logo.png
+    - assets/images/stethoscope.svg
+    - assets/images/surgery.svg
+    - assets/images/surgery-fill.svg
+
+flutter_native_splash:
+  # This package generates native code to customize Flutter's default white native splash screen
+  # with background color and splash image.
+  # Customize the parameters below, and run the following command in the terminal:
+  # dart run flutter_native_splash:create
+  # To restore Flutter's default white splash screen, run the following command in the terminal:
+  # dart run flutter_native_splash:remove
+
+  # Color or image to be used during splash screen loading
+  color: "#EB5466"
+  #color_dark: "#042a49"
+
+  # The image parameter allows you to specify an image used in the splash screen
+  image: assets/images/logo.png
+  #image_dark: assets/images/logo.png
+
+  # The color_dark, image_dark, android_12, and android_12_dark parameters are optional,
+  # but recommended if you want your app to work well on devices with dark mode enabled.
+  #color_dark: "#042a49"
+  #image_dark: assets/images/logo.png
+
+  # Android 12+ specific settings
+  #android_12:
+  #  image: assets/images/logo.png
+  #  color: "#EB5466"
+  #  image_dark: assets/images/logo.png
+  #  color_dark: "#042a49"
+
+  # The following parameters are platform-specific and are not required.
+
+  # Android settings
+  android: true
+  android_gravity: center
+  #android_gravity can be one of the following Android Gravity (see
+  # https://developer.android.com/reference/android/view/Gravity):
+  # * bottom
+  # * center
+  # * center_horizontal
+  # * center_vertical
+  # * clip_horizontal
+  # * clip_vertical
+  # * end
+  # * fill
+  # * fill_horizontal
+  # * fill_vertical
+  # * left
+  # * right
+  # * start
+  # * top
+
+  # iOS settings
+  ios: true
+
+  # Web settings
+  web: false
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/logo.png"
+  adaptive_icon_background: "#EB5466"
+  adaptive_icon_foreground: "assets/images/logo.png"
