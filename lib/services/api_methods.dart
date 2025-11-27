@@ -168,6 +168,13 @@ class ApiMethods {
     return await _api.get('/v1/nurse/get-upcomming-bookings');
   }
 
+  /// Get Booking Details
+  /// GET /v1/nurse/get-booking/{id}
+  /// Returns: { status: true, message: "...", result: { booking: {...}, patient: {...}, ... } }
+  static Future<Response> getBookingDetails(int bookingId) async {
+    return await _api.get('/v1/nurse/get-booking/$bookingId');
+  }
+
   /// Get Appointments List (filter by status only - then filter locally)
   /// GET /appointments?status=upcoming
   static Future<Response> getAppointments({
@@ -232,6 +239,60 @@ class ApiMethods {
 
   // ========== SURGERIES ==========
 
+  /// Get Today and Upcoming Surgeries
+  /// GET /v1/doctor/surgery/today-upcoming
+  /// Returns: { "today": [...], "upcoming": [] }
+  static Future<Response> getTodayUpcomingSurgeries() async {
+    return await _api.get('/v1/doctor/surgery/today-upcoming');
+  }
+
+  /// Get Unassigned Surgeries
+  /// GET /v1/doctor/surgery/unassigned
+  /// Returns: [{ id, surgery_id, patient_id, appointment_id, status, ... }]
+  static Future<Response> getUnassignedSurgeries() async {
+    return await _api.get('/v1/doctor/surgery/unassigned');
+  }
+
+  /// Get Completed/Finished Surgeries
+  /// GET /v1/doctor/surgery/completed
+  /// Returns: {surgeries: [...], total: number, page: number, per_page: number}
+  static Future<Response> getCompletedSurgeries() async {
+    return await _api.get('/v1/doctor/surgery/completed');
+  }
+
+  /// Assign Date to Surgery
+  /// PUT /v1/doctor/surgery/{id}/assign-date
+  /// Body: { "surgery_date": "2025-11-26T19:30:00" }
+  static Future<Response> assignSurgeryDate({
+    required int surgeryId,
+    required String surgeryDate, // ISO 8601 format: "2025-11-26T19:30:00"
+  }) async {
+    return await _api.put(
+      '/v1/doctor/surgery/$surgeryId/assign-date',
+      data: {'surgery_date': surgeryDate},
+    );
+  }
+
+  /// Get Surgery Details
+  /// GET /v1/doctor/surgery/{id}
+  /// Returns: { status: true, result: { surgery: {...}, appointment: {...}, prescription: {...} } }
+  static Future<Response> getSurgeryDetails(int surgeryId) async {
+    return await _api.get('/v1/doctor/surgery/$surgeryId');
+  }
+
+  /// Update Surgery Status
+  /// PUT /v1/doctor/surgery/{id}/status
+  /// Body: { "status": "ONGOING" | "FINISHED" | "CANCELLED" }
+  static Future<Response> updateSurgeryStatus({
+    required int surgeryId,
+    required String status, // "ONGOING", "FINISHED", "CANCELLED"
+  }) async {
+    return await _api.put(
+      '/v1/doctor/surgery/$surgeryId/status',
+      data: {'status': status},
+    );
+  }
+
   /// Get Surgeries List (filter by status only - then filter locally)
   /// GET /surgeries?status=ongoing
   static Future<Response> getSurgeries({
@@ -249,18 +310,6 @@ class ApiMethods {
   /// GET /surgeries/{surgeryId}
   static Future<Response> getSurgery(String surgeryId) async {
     return await _api.get('/surgeries/$surgeryId');
-  }
-
-  /// Update Surgery Status
-  /// PATCH /surgeries/{surgeryId}/status
-  static Future<Response> updateSurgeryStatus({
-    required String surgeryId,
-    required String status, // 'ongoing', 'finished', 'post_surgery'
-  }) async {
-    return await _api.patch(
-      '/surgeries/$surgeryId/status',
-      data: {'status': status},
-    );
   }
 
   // ========== CONSULTATIONS ==========

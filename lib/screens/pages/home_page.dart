@@ -5,6 +5,7 @@ import 'dart:async';
 import '../../theme/app_colors.dart';
 import '../../services/api_methods.dart';
 import '../../services/profile_manager.dart';
+import 'appointment_details_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.userName});
@@ -77,15 +78,24 @@ class _HomePageState extends State<HomePage> {
       final profile = await ProfileManager.instance.getProfile();
       print('✅ Profile loaded');
 
-      // Use userId from profile, fallback to 1 if null (temporary fix)
-      final userId = profile.userId ?? 1;
+      // Use userId from profile
+      final userId = profile.userId;
 
       print('=== LOADING APPOINTMENTS ===');
       print('Current User ID: $userId (from profile: ${profile.userId})');
       print('Profile data: userId=${profile.userId}, email=${profile.email}');
 
       if (profile.userId == null) {
-        print('⚠️ WARNING: Profile userId is null, using fallback userId = 1');
+        print('⚠️ WARNING: Profile userId is null, user may need to re-login');
+        // If no userId, we can't load appointments - user should re-login
+        setState(() {
+          _appointments = [];
+          if (isInitialLoad) {
+            _isLoading = false;
+            _isInitialLoad = false;
+          }
+        });
+        return;
       }
 
       // Fetch all bookings from API
@@ -264,12 +274,57 @@ class _HomePageState extends State<HomePage> {
         print('   Status Code: ${e.response?.statusCode}');
         print('   Response Data: ${e.response?.data}');
       }
+
+      String errorMessage = 'Failed to load appointments';
+
+      if (e.response != null) {
+        final statusCode = e.response?.statusCode;
+        if (statusCode == 500) {
+          errorMessage =
+              'Server error. Our team has been notified. Please try again later.';
+        } else if (statusCode == 401) {
+          errorMessage = 'Session expired. Please login again.';
+        } else if (statusCode == 403) {
+          errorMessage = 'Access denied. Please check your permissions.';
+        } else if (statusCode != null &&
+            statusCode >= 400 &&
+            statusCode < 500) {
+          errorMessage = 'Request failed. Please try again.';
+        } else if (statusCode != null && statusCode >= 500) {
+          errorMessage = 'Server error. Please try again later.';
+        }
+      } else if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.sendTimeout) {
+        errorMessage =
+            'Connection timeout. Please check your internet connection and try again.';
+      } else if (e.type == DioExceptionType.connectionError) {
+        errorMessage =
+            'No internet connection. Please check your network and try again.';
+      } else if (e.message != null &&
+          (e.message!.contains('Failed host lookup') ||
+              e.message!.contains('SocketException') ||
+              e.message!.contains('Network is unreachable'))) {
+        errorMessage =
+            'No internet connection. Please check your network settings.';
+      }
+
       setState(() {
         if (isInitialLoad) {
           _isLoading = false;
           _isInitialLoad = false;
         }
       });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
       print('=== END LOADING APPOINTMENTS ===\n');
     } catch (e) {
       print('❌ General Error loading appointments: $e');
@@ -280,6 +335,16 @@ class _HomePageState extends State<HomePage> {
           _isInitialLoad = false;
         }
       });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('An unexpected error occurred. Please try again.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
       print('=== END LOADING APPOINTMENTS ===\n');
     } finally {
       // Always reset refreshing flag
@@ -473,29 +538,30 @@ class _HomePageState extends State<HomePage> {
                     activeColor: AppColors.primary,
                   ),
                 ),
-                // Finished option
-                ListTile(
-                  leading: Icon(
-                    Icons.check_circle,
-                    color: tempFilters.contains('Finished')
-                        ? AppColors.primary
-                        : Colors.grey,
+                // Finished option - only show for regular appointments, not upcoming
+                if (!isUpcoming)
+                  ListTile(
+                    leading: Icon(
+                      Icons.check_circle,
+                      color: tempFilters.contains('Finished')
+                          ? AppColors.primary
+                          : Colors.grey,
+                    ),
+                    title: const Text('Finished'),
+                    trailing: Checkbox(
+                      value: tempFilters.contains('Finished'),
+                      onChanged: (value) {
+                        setModalState(() {
+                          if (value == true) {
+                            tempFilters.add('Finished');
+                          } else {
+                            tempFilters.remove('Finished');
+                          }
+                        });
+                      },
+                      activeColor: AppColors.primary,
+                    ),
                   ),
-                  title: const Text('Finished'),
-                  trailing: Checkbox(
-                    value: tempFilters.contains('Finished'),
-                    onChanged: (value) {
-                      setModalState(() {
-                        if (value == true) {
-                          tempFilters.add('Finished');
-                        } else {
-                          tempFilters.remove('Finished');
-                        }
-                      });
-                    },
-                    activeColor: AppColors.primary,
-                  ),
-                ),
                 const SizedBox(height: 20),
                 // Apply button
                 Padding(
@@ -718,122 +784,142 @@ class _HomePageState extends State<HomePage> {
                       )
                     else
                       ..._filteredAppointments.map((appointment) {
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 16),
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: AppColors.cardBackground,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Stack(
-                            children: [
-                              Row(
-                                children: [
-                                  // Avatar
-                                  CircleAvatar(
-                                    radius: 30,
-                                    backgroundColor: Colors.white,
-                                    child: Icon(
-                                      appointment['avatar'] as IconData,
+                        final bookingId = appointment['booking_id'] as int?;
+                        print('📋 Appointment card - booking_id: $bookingId');
+                        return InkWell(
+                          onTap: bookingId != null
+                              ? () {
+                                  print(
+                                    '🔵 Clicked appointment with booking_id: $bookingId',
+                                  );
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          AppointmentDetailsPage(
+                                            bookingId: bookingId,
+                                          ),
+                                    ),
+                                  );
+                                }
+                              : null,
+                          borderRadius: BorderRadius.circular(16),
+                          child: Container(
+                            margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: AppColors.cardBackground,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Stack(
+                              children: [
+                                Row(
+                                  children: [
+                                    // Avatar
+                                    CircleAvatar(
+                                      radius: 30,
+                                      backgroundColor: Colors.white,
+                                      child: Icon(
+                                        appointment['avatar'] as IconData,
+                                        color: AppColors.primary,
+                                        size: 30,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 16),
+                                    // Details
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            appointment['name'] as String,
+                                            style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                              color: Color(0xFF333333),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'ID: ${appointment['id']}',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey.shade600,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                Icons.access_time_filled,
+                                                size: 16,
+                                                color: AppColors.primary,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                appointment['time'] as String,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey.shade700,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 16),
+                                              SvgPicture.asset(
+                                                'assets/images/stethoscope.svg',
+                                                width: 16,
+                                                height: 16,
+                                                colorFilter: ColorFilter.mode(
+                                                  AppColors.primary,
+                                                  BlendMode.srcIn,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                appointment['issues'] != null &&
+                                                        (appointment['issues']
+                                                                as String)
+                                                            .isNotEmpty
+                                                    ? appointment['issues']
+                                                          as String
+                                                    : appointment['type']
+                                                          as String,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey.shade700,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                // Status badge at top right
+                                Positioned(
+                                  top: 0,
+                                  right: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
                                       color: AppColors.primary,
-                                      size: 30,
+                                      borderRadius: BorderRadius.circular(4),
                                     ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  // Details
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          appointment['name'] as String,
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            color: Color(0xFF333333),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          'ID: ${appointment['id']}',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey.shade600,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              Icons.access_time_filled,
-                                              size: 16,
-                                              color: AppColors.primary,
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              appointment['time'] as String,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey.shade700,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 16),
-                                            SvgPicture.asset(
-                                              'assets/images/stethoscope.svg',
-                                              width: 16,
-                                              height: 16,
-                                              colorFilter: ColorFilter.mode(
-                                                AppColors.primary,
-                                                BlendMode.srcIn,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              appointment['issues'] != null &&
-                                                      (appointment['issues']
-                                                              as String)
-                                                          .isNotEmpty
-                                                  ? appointment['issues']
-                                                        as String
-                                                  : appointment['type']
-                                                        as String,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey.shade700,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              // Status badge at top right
-                              Positioned(
-                                top: 0,
-                                right: 0,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.primary,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    appointment['status'] as String,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w600,
+                                    child: Text(
+                                      appointment['status'] as String,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         );
                       }),
@@ -888,122 +974,144 @@ class _HomePageState extends State<HomePage> {
                       )
                     else
                       ..._filteredUpcomingAppointments.map((appointment) {
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 16),
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: AppColors.cardBackground,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Stack(
-                            children: [
-                              Row(
-                                children: [
-                                  // Avatar
-                                  CircleAvatar(
-                                    radius: 30,
-                                    backgroundColor: Colors.white,
-                                    child: Icon(
-                                      appointment['avatar'] as IconData,
+                        final bookingId = appointment['booking_id'] as int?;
+                        print(
+                          '📋 Upcoming appointment card - booking_id: $bookingId',
+                        );
+                        return InkWell(
+                          onTap: bookingId != null
+                              ? () {
+                                  print(
+                                    '🔵 Clicked upcoming appointment with booking_id: $bookingId',
+                                  );
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          AppointmentDetailsPage(
+                                            bookingId: bookingId,
+                                          ),
+                                    ),
+                                  );
+                                }
+                              : null,
+                          borderRadius: BorderRadius.circular(16),
+                          child: Container(
+                            margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: AppColors.cardBackground,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Stack(
+                              children: [
+                                Row(
+                                  children: [
+                                    // Avatar
+                                    CircleAvatar(
+                                      radius: 30,
+                                      backgroundColor: Colors.white,
+                                      child: Icon(
+                                        appointment['avatar'] as IconData,
+                                        color: AppColors.primary,
+                                        size: 30,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 16),
+                                    // Details
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            appointment['name'] as String,
+                                            style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                              color: Color(0xFF333333),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'ID: ${appointment['id']}',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey.shade600,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                Icons.access_time_filled,
+                                                size: 16,
+                                                color: AppColors.primary,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                appointment['time'] as String,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey.shade700,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 16),
+                                              SvgPicture.asset(
+                                                'assets/images/stethoscope.svg',
+                                                width: 16,
+                                                height: 16,
+                                                colorFilter: ColorFilter.mode(
+                                                  AppColors.primary,
+                                                  BlendMode.srcIn,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                appointment['issues'] != null &&
+                                                        (appointment['issues']
+                                                                as String)
+                                                            .isNotEmpty
+                                                    ? appointment['issues']
+                                                          as String
+                                                    : appointment['type']
+                                                          as String,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey.shade700,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                // Status badge at top right
+                                Positioned(
+                                  top: 0,
+                                  right: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
                                       color: AppColors.primary,
-                                      size: 30,
+                                      borderRadius: BorderRadius.circular(4),
                                     ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  // Details
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          appointment['name'] as String,
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            color: Color(0xFF333333),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          'ID: ${appointment['id']}',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey.shade600,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              Icons.access_time_filled,
-                                              size: 16,
-                                              color: AppColors.primary,
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              appointment['time'] as String,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey.shade700,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 16),
-                                            SvgPicture.asset(
-                                              'assets/images/stethoscope.svg',
-                                              width: 16,
-                                              height: 16,
-                                              colorFilter: ColorFilter.mode(
-                                                AppColors.primary,
-                                                BlendMode.srcIn,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              appointment['issues'] != null &&
-                                                      (appointment['issues']
-                                                              as String)
-                                                          .isNotEmpty
-                                                  ? appointment['issues']
-                                                        as String
-                                                  : appointment['type']
-                                                        as String,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey.shade700,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              // Status badge at top right
-                              Positioned(
-                                top: 0,
-                                right: 0,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.primary,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    appointment['status'] as String,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w600,
+                                    child: Text(
+                                      appointment['status'] as String,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         );
                       }),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../theme/app_colors.dart';
 import '../services/api_methods.dart';
+import '../services/profile_manager.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, required this.onLogin});
@@ -52,6 +53,9 @@ class _LoginPageState extends State<LoginPage> {
         final result = data['result'] as Map<String, dynamic>;
         final userName = result['full_name'] ?? result['email'] ?? 'User';
         final token = result['token'] ?? '';
+
+        // Save user profile data from login response
+        await ProfileManager.instance.saveProfileFromAPI(result);
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

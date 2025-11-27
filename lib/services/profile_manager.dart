@@ -109,12 +109,20 @@ class ProfileManager {
     final prefs = await SharedPreferences.getInstance();
 
     // Save all available fields from API response
+    // Handle both 'user_id' (from profile API) and 'id' (from login API)
     if (result['user_id'] != null) {
       await prefs.setInt(
         _keyUserId,
         result['user_id'] is int
             ? result['user_id']
             : int.tryParse(result['user_id'].toString()) ?? 0,
+      );
+    } else if (result['id'] != null) {
+      await prefs.setInt(
+        _keyUserId,
+        result['id'] is int
+            ? result['id']
+            : int.tryParse(result['id'].toString()) ?? 0,
       );
     }
     if (result['email'] != null) {

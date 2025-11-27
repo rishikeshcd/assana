@@ -37,6 +37,10 @@ class ApiService {
     _token = token;
   }
 
+  String? getToken() {
+    return _token;
+  }
+
   void clearToken() {
     _token = null;
   }

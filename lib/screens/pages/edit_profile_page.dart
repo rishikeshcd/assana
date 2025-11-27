@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
@@ -15,6 +16,7 @@ class EditProfilePage extends StatefulWidget {
 }
 
 class _EditProfilePageState extends State<EditProfilePage> {
+  final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _designationController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -35,8 +37,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   Future<void> _loadProfile() async {
     try {
-      // Fetch profile data from API (using userId = 1 for now)
-      final response = await ApiMethods.getProfileData(1);
+      // Get user ID from saved profile
+      final profile = await ProfileManager.instance.getProfile();
+      final userId = profile.userId ?? 1; // fallback to 1 if not found
+
+      // Fetch profile data from API
+      final response = await ApiMethods.getProfileData(userId);
 
       if (response.data['status'] == true && response.data['result'] != null) {
         final result = response.data['result'] as Map<String, dynamic>;
@@ -200,6 +206,22 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   Future<void> _handleUpdate() async {
+    // Validate form before submitting
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    // Additional validation for phone number
+    final phoneNumber = _phoneController.text.trim();
+    if (phoneNumber.isNotEmpty && phoneNumber.length != 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Phone number must be exactly 10 digits'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     if (!_isEditing) return;
 
     // Validate required fields
@@ -218,8 +240,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
     });
 
     try {
-      // Use userId = 1 for now (as requested)
-      final userId = 1;
+      // Get user ID from saved profile
+      final profile = await ProfileManager.instance.getProfile();
+      final userId = profile.userId ?? 1; // fallback to 1 if not found
 
       // Upload image first if a new image is selected
       if (_selectedImage != null) {
@@ -563,7 +586,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     enabled: _isEditing,
                   ),
                   const SizedBox(height: 20),
-                  // Email Field (Read-only from login)
+                  // Email Field (Read-only from login - not editable)
                   if (_originalProfile?.email != null)
                     _buildReadOnlyField(
                       label: 'Email',
@@ -582,34 +605,40 @@ class _EditProfilePageState extends State<EditProfilePage> {
                   if (_originalProfile?.role != null)
                     const SizedBox(height: 20),
 
-                  // Name Field
-
-                  // Designation Field
-                  _buildInputField(
-                    label: 'Designation',
-                    icon: Icons.badge,
-                    controller: _designationController,
-                    placeholder: 'Enter your designation',
-                    enabled: _isEditing,
-                  ),
-                  const SizedBox(height: 20),
-                  // Phone Number Field
-                  _buildInputField(
-                    label: 'Phone Number',
-                    icon: Icons.phone,
-                    controller: _phoneController,
-                    placeholder: 'Enter your phone number',
-                    enabled: _isEditing,
-                  ),
-                  const SizedBox(height: 20),
-                  // Change Password Field
-                  _buildInputField(
-                    label: 'Change Password',
-                    icon: Icons.lock,
-                    controller: _passwordController,
-                    placeholder: 'Enter new password',
-                    isPassword: true,
-                    enabled: _isEditing,
+                  // Form for validation
+                  Form(
+                    key: _formKey,
+                    child: Column(
+                      children: [
+                        // Designation Field
+                        _buildInputField(
+                          label: 'Designation',
+                          icon: Icons.badge,
+                          controller: _designationController,
+                          placeholder: 'Enter your designation',
+                          enabled: _isEditing,
+                        ),
+                        const SizedBox(height: 20),
+                        // Phone Number Field
+                        _buildPhoneInputField(
+                          label: 'Phone Number',
+                          icon: Icons.phone,
+                          controller: _phoneController,
+                          placeholder: 'Enter your phone number',
+                          enabled: _isEditing,
+                        ),
+                        const SizedBox(height: 20),
+                        // Change Password Field
+                        _buildInputField(
+                          label: 'Change Password',
+                          icon: Icons.lock,
+                          controller: _passwordController,
+                          placeholder: 'Enter new password',
+                          isPassword: true,
+                          enabled: _isEditing,
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 40),
                   // Update Button
@@ -704,6 +733,82 @@ class _EditProfilePageState extends State<EditProfilePage> {
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPhoneInputField({
+    required String label,
+    required IconData icon,
+    required TextEditingController controller,
+    required String placeholder,
+    bool enabled = false,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.black,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: controller,
+          enabled: enabled,
+          readOnly: !enabled,
+          keyboardType: TextInputType.phone,
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(10),
+          ],
+          validator: (value) {
+            if (enabled && value != null && value.isNotEmpty) {
+              if (value.length != 10) {
+                return 'Phone number must be exactly 10 digits';
+              }
+            }
+            return null;
+          },
+          style: TextStyle(
+            color: enabled ? Colors.grey.shade700 : Colors.grey.shade500,
+            fontSize: 14,
+          ),
+          decoration: InputDecoration(
+            hintText: placeholder,
+            hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+            prefixIcon: Icon(icon, color: Colors.grey.shade600, size: 20),
+            filled: true,
+            fillColor: AppColors.cardBackground,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Colors.red, width: 1),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Colors.red, width: 1),
             ),
           ),
         ),

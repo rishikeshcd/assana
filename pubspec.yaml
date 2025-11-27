@@ -1,5 +1,5 @@
-name: assana
-description: "A new Flutter project."
+name: Assana
+description: "Healthcare Managemen"
 publish_to: 'none'
 version: 0.1.0
 
@@ -11,15 +11,24 @@ dependencies:
     sdk: flutter
   shared_preferences: ^2.2.2
   flutter_svg: ^2.0.9
-  google_fonts: ^6.1.0
+  google_fonts: ^6.3.2
   image_picker: ^1.0.7
   dio: ^5.4.0
   cached_network_image: ^3.3.1
+  dtd: ^4.0.0
+  flutter_lints: ^6.0.0
+  json_rpc_2: ^4.0.0
+  path: ^1.9.1
+  stack_trace: ^1.12.1
+  url_launcher: ^6.3.2
+  web: ^1.1.1
+  webview_flutter: ^4.4.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_native_splash: ^2.4.7
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
@@ -29,6 +38,7 @@ flutter:
     - assets/images/stethoscope.svg
     - assets/images/surgery.svg
     - assets/images/surgery-fill.svg
+    - assets/images/assana_icon.png
 
 flutter_native_splash:
   # This package generates native code to customize Flutter's default white native splash screen
@@ -38,12 +48,12 @@ flutter_native_splash:
   # To restore Flutter's default white splash screen, run the following command in the terminal:
   # dart run flutter_native_splash:remove
 
-  # Color or image to be used during splash screen loading
-  color: "#EB5466"
+  # Color or image to be used during splash screen loading (light pink like cardBackground)
+  color: "#FFE5EC"
   #color_dark: "#042a49"
 
   # The image parameter allows you to specify an image used in the splash screen
-  image: assets/images/logo.png
+  image: assets/images/assana_icon.png
   #image_dark: assets/images/logo.png
 
   # The color_dark, image_dark, android_12, and android_12_dark parameters are optional,
@@ -89,6 +99,8 @@ flutter_native_splash:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/images/logo.png"
-  adaptive_icon_background: "#EB5466"
-  adaptive_icon_foreground: "assets/images/logo.png"
+  image_path: "assets/images/assana_icon.png"
+  adaptive_icon_background: "#FFE5EC"
+  adaptive_icon_foreground: "assets/images/assana_icon.png"
+  remove_alpha_ios: true
+

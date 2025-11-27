@@ -12,8 +12,8 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  bool _lightModeEnabled = true;
-  bool _notificationsEnabled = true;
+  // bool _lightModeEnabled = true; // Commented out - theme functionality not available yet
+  // bool _notificationsEnabled = true; // Commented out - notification functionality not available yet
 
   @override
   Widget build(BuildContext context) {
@@ -63,28 +63,28 @@ class _SettingsPageState extends State<SettingsPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Theme section
-                  const Text(
-                    'Theme',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF333333),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  _SettingsItem(
-                    icon: Icons.brightness_6,
-                    title: 'Light Mode',
-                    subtitle: 'Bright and clear',
-                    trailing: _CustomToggle(
-                      value: _lightModeEnabled,
-                      onChanged: (value) {
-                        setState(() {
-                          _lightModeEnabled = value;
-                        });
-                      },
-                    ),
-                  ),
+                  // const Text(
+                  //   'Theme',
+                  //   style: TextStyle(
+                  //     fontSize: 18,
+                  //     fontWeight: FontWeight.bold,
+                  //     color: Color(0xFF333333),
+                  //   ),
+                  // ),
+                  // const SizedBox(height: 16),
+                  // _SettingsItem(
+                  //   icon: Icons.brightness_6,
+                  //   title: 'Light Mode',
+                  //   subtitle: 'Bright and clear',
+                  //   trailing: _CustomToggle(
+                  //     value: _lightModeEnabled,
+                  //     onChanged: (value) {
+                  //       setState(() {
+                  //         _lightModeEnabled = value;
+                  //       });
+                  //     },
+                  //   ),
+                  // ),
                   const SizedBox(height: 32),
                   // Account section
                   const Text(
@@ -113,20 +113,20 @@ class _SettingsPageState extends State<SettingsPage> {
                       );
                     },
                   ),
-                  const SizedBox(height: 12),
-                  _SettingsItem(
-                    icon: Icons.notifications,
-                    title: 'Notifications',
-                    subtitle: 'Enabled',
-                    trailing: _CustomToggle(
-                      value: _notificationsEnabled,
-                      onChanged: (value) {
-                        setState(() {
-                          _notificationsEnabled = value;
-                        });
-                      },
-                    ),
-                  ),
+                  // const SizedBox(height: 12),
+                  // _SettingsItem(
+                  //   icon: Icons.notifications,
+                  //   title: 'Notifications',
+                  //   subtitle: 'Enabled',
+                  //   trailing: _CustomToggle(
+                  //     value: _notificationsEnabled,
+                  //     onChanged: (value) {
+                  //       setState(() {
+                  //         _notificationsEnabled = value;
+                  //       });
+                  //     },
+                  //   ),
+                  // ),
                   const SizedBox(height: 12),
                   _SettingsItem(
                     icon: Icons.logout,
@@ -226,67 +226,68 @@ class _SettingsItem extends StatelessWidget {
   }
 }
 
-class _CustomToggle extends StatelessWidget {
-  const _CustomToggle({required this.value, required this.onChanged});
+// Commented out - not used since notification functionality is not available yet
+// class _CustomToggle extends StatelessWidget {
+//   const _CustomToggle({required this.value, required this.onChanged});
 
-  final bool value;
-  final ValueChanged<bool> onChanged;
+//   final bool value;
+//   final ValueChanged<bool> onChanged;
 
-  @override
-  Widget build(BuildContext context) {
-    const double trackHeight = 18.0; // Track height (smaller)
-    const double thumbSize = 26.0; // Thumb size (bigger than track)
-    const double trackWidth = 48.0;
-    const double borderWidth = 1.5;
+//   @override
+//   Widget build(BuildContext context) {
+//     const double trackHeight = 18.0; // Track height (smaller)
+//     const double thumbSize = 26.0; // Thumb size (bigger than track)
+//     const double trackWidth = 48.0;
+//     const double borderWidth = 1.5;
 
-    return GestureDetector(
-      onTap: () => onChanged(!value),
-      child: SizedBox(
-        width: trackWidth,
-        height: thumbSize, // Container height matches thumb to allow overflow
-        child: Stack(
-          clipBehavior: Clip.none,
-          alignment: Alignment.center,
-          children: [
-            // Track (line)
-            Positioned(
-              top: (thumbSize - trackHeight) / 2,
-              child: Container(
-                width: trackWidth,
-                height: trackHeight,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(trackHeight / 2),
-                  border: Border.all(
-                    color: AppColors.primary,
-                    width: borderWidth,
-                  ),
-                  color: Colors.white,
-                ),
-              ),
-            ),
-            // Thumb
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeInOut,
-              left: value ? trackWidth - thumbSize - 2 : 2,
-              child: Container(
-                width: thumbSize,
-                height: thumbSize,
-                decoration: BoxDecoration(
-                  color: value ? AppColors.primary : Colors.white,
-                  shape: BoxShape.circle,
-                  border: value
-                      ? null
-                      : Border.all(
-                          color: AppColors.primary,
-                          width: borderWidth,
-                        ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+//     return GestureDetector(
+//       onTap: () => onChanged(!value),
+//       child: SizedBox(
+//         width: trackWidth,
+//         height: thumbSize, // Container height matches thumb to allow overflow
+//         child: Stack(
+//           clipBehavior: Clip.none,
+//           alignment: Alignment.center,
+//           children: [
+//             // Track (line)
+//             Positioned(
+//               top: (thumbSize - trackHeight) / 2,
+//               child: Container(
+//                 width: trackWidth,
+//                 height: trackHeight,
+//                 decoration: BoxDecoration(
+//                   borderRadius: BorderRadius.circular(trackHeight / 2),
+//                   border: Border.all(
+//                     color: AppColors.primary,
+//                     width: borderWidth,
+//                   ),
+//                   color: Colors.white,
+//                 ),
+//               ),
+//             ),
+//             // Thumb
+//             AnimatedPositioned(
+//               duration: const Duration(milliseconds: 200),
+//               curve: Curves.easeInOut,
+//               left: value ? trackWidth - thumbSize - 2 : 2,
+//               child: Container(
+//                 width: thumbSize,
+//                 height: thumbSize,
+//                 decoration: BoxDecoration(
+//                   color: value ? AppColors.primary : Colors.white,
+//                   shape: BoxShape.circle,
+//                   border: value
+//                       ? null
+//                       : Border.all(
+//                           color: AppColors.primary,
+//                           width: borderWidth,
+//                         ),
+//                 ),
+//               ),
+//             ),
+//           ],
+//         ),
+//       ),
+//     );
+//   }
+// }
