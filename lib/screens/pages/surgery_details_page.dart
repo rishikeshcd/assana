@@ -185,6 +185,26 @@ class _SurgeryDetailsPageState extends State<SurgeryDetailsPage>
     );
   }
 
+  void _showRescheduleDialog() {
+    if (_surgeryData == null) return;
+
+    // Create a surgery map with patient name for the dialog
+    final surgeryForDialog = Map<String, dynamic>.from(_surgeryData!);
+    if (_appointmentData?['patient_name'] != null) {
+      surgeryForDialog['name'] = _appointmentData!['patient_name'];
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => _RescheduleDialog(
+        surgery: surgeryForDialog,
+        onRescheduled: () {
+          _loadSurgeryDetails(); // Reload details after rescheduling
+        },
+      ),
+    );
+  }
+
   String _formatDateTime(String? dateTimeString) {
     if (dateTimeString == null || dateTimeString.isEmpty) {
       return 'Not scheduled';
@@ -333,6 +353,27 @@ class _SurgeryDetailsPageState extends State<SurgeryDetailsPage>
                             ),
                     const SizedBox(height: 16),
 
+                    // Reschedule Button (only for today's/upcoming surgeries)
+                    if (_canChangeStatus() && _surgeryData != null)
+                      ElevatedButton.icon(
+                        onPressed: () => _showRescheduleDialog(),
+                        icon: const Icon(Icons.schedule),
+                        label: const Text('Reschedule Surgery'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orange,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 12,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    if (_canChangeStatus() && _surgeryData != null)
+                      const SizedBox(height: 16),
+
                     // Medical Report Link
                     if (_appointmentData?['medical_report_link_unlocked'] !=
                         null)
@@ -446,8 +487,10 @@ class _StatusDialogState extends State<_StatusDialog> {
   List<String> _getAvailableStatusOptions() {
     final currentStatus = widget.currentStatus?.toUpperCase() ?? '';
 
-    // If status is SCHEDULED or SHEDULED, only allow ONGOING or CANCELLED
-    if (currentStatus == 'SCHEDULED' || currentStatus == 'SHEDULED') {
+    // If status is SCHEDULED, SHEDULED, or RESCHEDULED, only allow ONGOING or CANCELLED
+    if (currentStatus == 'SCHEDULED' ||
+        currentStatus == 'SHEDULED' ||
+        currentStatus == 'RESCHEDULED') {
       return ['ONGOING', 'CANCELLED'];
     }
 
@@ -623,6 +666,295 @@ class _StatusDialogState extends State<_StatusDialog> {
                   ),
                 )
               : const Text('Update'),
+        ),
+      ],
+    );
+  }
+}
+
+class _RescheduleDialog extends StatefulWidget {
+  const _RescheduleDialog({
+    required this.surgery,
+    required this.onRescheduled,
+  });
+
+  final Map<String, dynamic> surgery;
+  final VoidCallback onRescheduled;
+
+  @override
+  State<_RescheduleDialog> createState() => _RescheduleDialogState();
+}
+
+class _RescheduleDialogState extends State<_RescheduleDialog> {
+  DateTime? _selectedDate;
+  TimeOfDay? _selectedTime;
+  final TextEditingController _reasonController = TextEditingController();
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _selectDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? DateTime.now(),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: AppColors.primary,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: AppColors.textPrimary,
+            ),
+            dialogBackgroundColor: Colors.white,
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedDate = picked;
+      });
+    }
+  }
+
+  Future<void> _selectTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? TimeOfDay.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: AppColors.primary,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: AppColors.textPrimary,
+            ),
+            dialogBackgroundColor: Colors.white,
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedTime = picked;
+      });
+    }
+  }
+
+  Future<void> _reschedule() async {
+    if (_selectedDate == null || _selectedTime == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select both date and time'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (_reasonController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please provide a reason for rescheduling'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Combine date and time into ISO 8601 format
+      final dateTime = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+        _selectedTime!.hour,
+        _selectedTime!.minute,
+      );
+      final isoDate = dateTime.toIso8601String().split('.')[0]; // Remove milliseconds
+
+      final surgeryId = widget.surgery['id'] as int;
+      final response = await ApiMethods.rescheduleSurgery(
+        surgeryId: surgeryId,
+        newDate: isoDate,
+        reason: _reasonController.text.trim(),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        Navigator.of(context).pop();
+        widget.onRescheduled();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Surgery rescheduled successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        throw Exception('Failed to reschedule surgery');
+      }
+    } catch (e) {
+      print('Error rescheduling surgery: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.white,
+      title: Text(
+        'Reschedule Surgery',
+        style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold),
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.surgery['name'] != null)
+              Text(
+                'Patient: ${widget.surgery['name']}',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            const SizedBox(height: 24),
+            // Date picker
+            InkWell(
+              onTap: _selectDate,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.calendar_today,
+                        color: AppColors.primary, size: 20),
+                    const SizedBox(width: 12),
+                    Text(
+                      _selectedDate == null
+                          ? 'Select New Date'
+                          : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: _selectedDate == null
+                            ? Colors.grey.shade600
+                            : AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Time picker
+            InkWell(
+              onTap: _selectTime,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.access_time,
+                        color: AppColors.primary, size: 20),
+                    const SizedBox(width: 12),
+                    Text(
+                      _selectedTime == null
+                          ? 'Select New Time'
+                          : _selectedTime!.format(context),
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: _selectedTime == null
+                            ? Colors.grey.shade600
+                            : AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Reason field
+            TextField(
+              controller: _reasonController,
+              decoration: InputDecoration(
+                labelText: 'Reason for Rescheduling',
+                hintText: 'Enter reason...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppColors.primary, width: 2),
+                ),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+          child: Text('Cancel', style: TextStyle(color: Colors.grey.shade700)),
+        ),
+        ElevatedButton(
+          onPressed: _isLoading ? null : _reschedule,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          child: _isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('Reschedule'),
         ),
       ],
     );

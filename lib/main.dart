@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:dio/dio.dart';
 import 'screens/login_page.dart';
 import 'screens/main_shell.dart';
 import 'services/session_manager.dart';
 import 'services/api_service.dart';
+import 'services/api_methods.dart';
 import 'theme/app_colors.dart';
 
 Future<void> main() async {
@@ -54,15 +56,73 @@ class _RootPageState extends State<RootPage> {
   }
 
   Future<void> _hydrateSession() async {
+    print('🔍 RootPage: Checking session...');
     final session = await SessionManager.instance.restoreSession();
-    if (!mounted) {
+
+    print('📋 Session state:');
+    print('   - isLoggedIn: ${session.isLoggedIn}');
+    print('   - userName: ${session.userName}');
+    print(
+      '   - token: ${session.token != null ? "Present (${session.token!.substring(0, 10)}...)" : "Missing"}',
+    );
+
+    // If no token or no logged in flag, definitely show login
+    if (!session.isLoggedIn ||
+        session.token == null ||
+        session.token!.isEmpty) {
+      print('❌ No valid session found, showing login page');
+      if (!mounted) return;
+      setState(() {
+        _isLoggedIn = false;
+        _userName = '';
+        _isLoading = false;
+      });
       return;
     }
-    setState(() {
-      _isLoggedIn = session.isLoggedIn;
-      _userName = session.userName ?? '';
-      _isLoading = false;
-    });
+
+    // Validate token by making an API call
+    try {
+      print('🔐 Validating token with API...');
+      // Try to get bookings - this requires authentication
+      // If token is invalid, it will throw a 401 error
+      await ApiMethods.getAllBookings();
+
+      // If we get here, token is valid
+      print('✅ Token is valid, API call successful');
+      if (!mounted) return;
+      setState(() {
+        _isLoggedIn = true;
+        _userName = session.userName ?? '';
+        _isLoading = false;
+      });
+    } on DioException catch (e) {
+      // Check if it's an authentication error
+      if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
+        print(
+          '❌ Token validation failed: Authentication error (${e.response?.statusCode})',
+        );
+      } else {
+        print('❌ Token validation failed: ${e.message}');
+      }
+      // Token is invalid or expired, clear session
+      await SessionManager.instance.clearSession();
+      if (!mounted) return;
+      setState(() {
+        _isLoggedIn = false;
+        _userName = '';
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('❌ Token validation failed: $e');
+      // Token is invalid or expired, clear session
+      await SessionManager.instance.clearSession();
+      if (!mounted) return;
+      setState(() {
+        _isLoggedIn = false;
+        _userName = '';
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _handleLogin(String userName, String token) async {

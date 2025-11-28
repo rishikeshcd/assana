@@ -19,8 +19,10 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Set<String> _selectedFilters =
       {}; // Empty = All, can select: 'New', 'Follow-Up', 'Finished'
-  Set<String> _selectedUpcomingFilters =
-      {}; // Empty = All, can select: 'New', 'Follow-Up', 'Finished'
+  Set<String> _selectedStatusFilters = {
+    'PENDING',
+  }; // Default: Only PENDING, can select: 'COMPLETED', 'PENDING', 'SURGERY_RECOMMENDED'
+  bool _showTodayOnly = false; // Filter to show only today's appointments
 
   List<Map<String, dynamic>> _appointments = [];
   bool _isLoading = true;
@@ -161,11 +163,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               dateTime = DateTime.parse(bookingTime);
               // Convert to local timezone for display
               dateTime = dateTime.toLocal();
-              print('   - Parsed dateTime (UTC): ${DateTime.parse(bookingTime)}');
+              print(
+                '   - Parsed dateTime (UTC): ${DateTime.parse(bookingTime)}',
+              );
               print('   - Parsed dateTime (Local): $dateTime');
               print('   - Current device time: ${DateTime.now()}');
-              print('   - Device timezone offset: ${DateTime.now().timeZoneOffset}');
-              
+              print(
+                '   - Device timezone offset: ${DateTime.now().timeZoneOffset}',
+              );
+
               // Format time as HH:MM AM/PM
               final hour = dateTime.hour;
               final minute = dateTime.minute;
@@ -183,12 +189,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               print('   ❌ Error parsing booking_time "$bookingTime": $e');
               print('   ❌ Stack trace: ${StackTrace.current}');
               // Set a fallback date to prevent empty date strings
-              dateStr = '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}';
+              dateStr =
+                  '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}';
             }
           } else {
             print('   ⚠️ booking_time is null or empty');
             // Set a fallback date to prevent empty date strings
-            dateStr = '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}';
+            dateStr =
+                '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}';
           }
 
           // Map appointment_type to type
@@ -238,7 +246,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             'time': timeStr,
             'date': dateStr,
             'type': type,
-            'status': status,
+            'status': status, // For display (New, Follow-Up, Finished)
+            'api_status': apiStatus
+                .toUpperCase(), // Original API status for filtering
             'avatar': Icons.person,
             'booking_id': booking['id'],
             'patient_id': booking['patient_id'],
@@ -344,10 +354,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       }
 
       setState(() {
-        if (isInitialLoad) {
-          _isLoading = false;
-          _isInitialLoad = false;
-        }
+        _isLoading = false;
+        _isInitialLoad = false;
+        _isRefreshing = false; // Reset refreshing flag on error
       });
 
       if (mounted) {
@@ -364,10 +373,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       print('❌ General Error loading appointments: $e');
       print('   Stack trace: ${StackTrace.current}');
       setState(() {
-        if (isInitialLoad) {
-          _isLoading = false;
-          _isInitialLoad = false;
-        }
+        _isLoading = false;
+        _isInitialLoad = false;
+        _isRefreshing = false; // Reset refreshing flag on error
       });
 
       if (mounted) {
@@ -387,78 +395,121 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   List<Map<String, dynamic>> get _filteredAppointments {
-    // Show only today's appointments
-    final today = DateTime.now();
-    final todayStr = '${today.day}/${today.month}/${today.year}';
+    // Start with all appointments
+    var filtered = List<Map<String, dynamic>>.from(_appointments);
 
-    print('🔍 Filtering appointments for today: $todayStr');
-    print('📋 Total appointments: ${_appointments.length}');
-    
-    // Debug: Print all appointment dates
-    for (var apt in _appointments) {
-      print('   - Appointment date: "${apt['date']}" (type: ${apt['date'].runtimeType})');
+    // Apply "Today" filter if enabled
+    if (_showTodayOnly) {
+      final today = DateTime.now();
+      final todayStr = '${today.day}/${today.month}/${today.year}';
+
+      filtered = filtered.where((appointment) {
+        final aptDate = appointment['date'] as String? ?? '';
+        return aptDate == todayStr;
+      }).toList();
     }
 
-    var filtered = _appointments.where((appointment) {
-      final aptDate = appointment['date'] as String? ?? '';
-      final matches = aptDate == todayStr;
-      if (!matches && aptDate.isNotEmpty) {
-        print('   ⚠️ Appointment date "$aptDate" does not match today "$todayStr"');
-      }
-      return matches;
-    }).toList();
-
-    print('✅ Filtered to ${filtered.length} appointments for today');
-
-    // Apply status filters if any are selected
+    // Apply appointment type filters if any are selected
     if (_selectedFilters.isNotEmpty) {
       filtered = filtered.where((appointment) {
         return _selectedFilters.contains(appointment['status'] as String);
       }).toList();
     }
 
-    return filtered;
-  }
-
-  List<Map<String, dynamic>> get _filteredUpcomingAppointments {
-    // Show appointments from tomorrow onwards
-    final today = DateTime.now();
-
-    var filtered = _appointments.where((appointment) {
-      final appointmentDate = appointment['date'] as String;
-      if (appointmentDate.isEmpty) return false;
-
-      // Parse appointment date
-      final parts = appointmentDate.split('/');
-      if (parts.length != 3) return false;
-
-      final appointmentDateTime = DateTime(
-        int.parse(parts[2]),
-        int.parse(parts[1]),
-        int.parse(parts[0]),
-      );
-
-      // Check if appointment is after today (tomorrow onwards)
-      final todayStart = DateTime(today.year, today.month, today.day);
-      final appointmentStart = DateTime(
-        appointmentDateTime.year,
-        appointmentDateTime.month,
-        appointmentDateTime.day,
-      );
-
-      return appointmentStart.isAfter(todayStart);
-    }).toList();
-
-    // Apply status filters if any are selected
-    if (_selectedUpcomingFilters.isNotEmpty) {
+    // Apply API status filters (COMPLETED, PENDING, SURGERY_RECOMMENDED)
+    if (_selectedStatusFilters.isNotEmpty) {
       filtered = filtered.where((appointment) {
-        return _selectedUpcomingFilters.contains(
-          appointment['status'] as String,
-        );
+        final apiStatus = appointment['api_status'] as String? ?? '';
+        return _selectedStatusFilters.contains(apiStatus);
       }).toList();
     }
 
+    // Sort appointments: today's first, then by date
+    final today = DateTime.now();
+    final todayStr = '${today.day}/${today.month}/${today.year}';
+
+    filtered.sort((a, b) {
+      final aDate = a['date'] as String? ?? '';
+      final bDate = b['date'] as String? ?? '';
+
+      // Today's appointments come first
+      final aIsToday = aDate == todayStr;
+      final bIsToday = bDate == todayStr;
+
+      if (aIsToday && !bIsToday) return -1;
+      if (!aIsToday && bIsToday) return 1;
+
+      // If both are today or both are not today, sort by date
+      if (aDate.isNotEmpty && bDate.isNotEmpty) {
+        try {
+          final aParts = aDate.split('/');
+          final bParts = bDate.split('/');
+          if (aParts.length == 3 && bParts.length == 3) {
+            final aDateTime = DateTime(
+              int.parse(aParts[2]),
+              int.parse(aParts[1]),
+              int.parse(aParts[0]),
+            );
+            final bDateTime = DateTime(
+              int.parse(bParts[2]),
+              int.parse(bParts[1]),
+              int.parse(bParts[0]),
+            );
+            return aDateTime.compareTo(bDateTime);
+          }
+        } catch (e) {
+          // If parsing fails, keep original order
+        }
+      }
+
+      return 0;
+    });
+
     return filtered;
+  }
+
+  String _formatAppointmentDate(String dateStr) {
+    if (dateStr.isEmpty) return 'Date not set';
+
+    final today = DateTime.now();
+    final todayStr = '${today.day}/${today.month}/${today.year}';
+
+    // If it's today, return "Today"
+    if (dateStr == todayStr) {
+      return 'Today';
+    }
+
+    // Otherwise, format the date nicely
+    try {
+      final parts = dateStr.split('/');
+      if (parts.length == 3) {
+        final day = int.parse(parts[0]);
+        final month = int.parse(parts[1]);
+        final year = int.parse(parts[2]);
+
+        final months = [
+          'Jan',
+          'Feb',
+          'Mar',
+          'Apr',
+          'May',
+          'Jun',
+          'Jul',
+          'Aug',
+          'Sep',
+          'Oct',
+          'Nov',
+          'Dec',
+        ];
+
+        return '$day ${months[month - 1]} $year';
+      }
+    } catch (e) {
+      // If parsing fails, return the original string
+      return dateStr;
+    }
+
+    return dateStr;
   }
 
   String _getCurrentDateString() {
@@ -500,11 +551,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
-  void _showFilterMenu({bool isUpcoming = false}) {
+  void _showFilterMenu() {
     // Create a local copy of selected filters for the bottom sheet
-    Set<String> tempFilters = Set<String>.from(
-      isUpcoming ? _selectedUpcomingFilters : _selectedFilters,
-    );
+    Set<String> tempFilters = Set<String>.from(_selectedFilters);
+    Set<String> tempStatusFilters = Set<String>.from(_selectedStatusFilters);
+    bool tempShowTodayOnly = _showTodayOnly;
 
     showModalBottomSheet(
       context: context,
@@ -514,119 +565,246 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       builder: (context) => StatefulBuilder(
         builder: (BuildContext context, StateSetter setModalState) {
           return Container(
-            padding: const EdgeInsets.symmetric(vertical: 20),
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.8,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Drag handle
+                Container(
+                  margin: const EdgeInsets.only(top: 12, bottom: 8),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
                 const Text(
-                  'Filter by Status',
+                  'Filter Appointments',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(height: 20),
-                // All option
-                ListTile(
-                  leading: Icon(
-                    Icons.list,
-                    color: tempFilters.isEmpty
-                        ? AppColors.primary
-                        : Colors.grey,
-                  ),
-                  title: const Text('All'),
-                  trailing: tempFilters.isEmpty
-                      ? Icon(Icons.check, color: AppColors.primary)
-                      : null,
-                  onTap: () {
-                    setModalState(() {
-                      tempFilters.clear();
-                    });
-                  },
-                ),
-                // New option
-                ListTile(
-                  leading: Icon(
-                    Icons.fiber_new,
-                    color: tempFilters.contains('New')
-                        ? AppColors.primary
-                        : Colors.grey,
-                  ),
-                  title: const Text('New'),
-                  trailing: Checkbox(
-                    value: tempFilters.contains('New'),
-                    onChanged: (value) {
-                      setModalState(() {
-                        if (value == true) {
-                          tempFilters.add('New');
-                        } else {
-                          tempFilters.remove('New');
-                        }
-                      });
-                    },
-                    activeColor: AppColors.primary,
-                  ),
-                ),
-                // Follow-Up option
-                ListTile(
-                  leading: Icon(
-                    Icons.update,
-                    color: tempFilters.contains('Follow-Up')
-                        ? AppColors.primary
-                        : Colors.grey,
-                  ),
-                  title: const Text('Follow-Up'),
-                  trailing: Checkbox(
-                    value: tempFilters.contains('Follow-Up'),
-                    onChanged: (value) {
-                      setModalState(() {
-                        if (value == true) {
-                          tempFilters.add('Follow-Up');
-                        } else {
-                          tempFilters.remove('Follow-Up');
-                        }
-                      });
-                    },
-                    activeColor: AppColors.primary,
-                  ),
-                ),
-                // Finished option - only show for regular appointments, not upcoming
-                if (!isUpcoming)
-                  ListTile(
-                    leading: Icon(
-                      Icons.check_circle,
-                      color: tempFilters.contains('Finished')
-                          ? AppColors.primary
-                          : Colors.grey,
+                const SizedBox(height: 10),
+                // Scrollable content
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Today filter option
+                        ListTile(
+                          leading: Icon(
+                            Icons.today,
+                            color: tempShowTodayOnly
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('Today Only'),
+                          trailing: Checkbox(
+                            value: tempShowTodayOnly,
+                            onChanged: (value) {
+                              setModalState(() {
+                                tempShowTodayOnly = value ?? false;
+                              });
+                            },
+                            activeColor: AppColors.primary,
+                          ),
+                        ),
+                        const Divider(),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Filter by Appointment Type',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // All option for appointment type
+                        ListTile(
+                          leading: Icon(
+                            Icons.list,
+                            color: tempFilters.isEmpty
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('All'),
+                          trailing: tempFilters.isEmpty
+                              ? Icon(Icons.check, color: AppColors.primary)
+                              : null,
+                          onTap: () {
+                            setModalState(() {
+                              tempFilters.clear();
+                            });
+                          },
+                        ),
+                        // New option
+                        ListTile(
+                          leading: Icon(
+                            Icons.fiber_new,
+                            color: tempFilters.contains('New')
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('New'),
+                          trailing: Checkbox(
+                            value: tempFilters.contains('New'),
+                            onChanged: (value) {
+                              setModalState(() {
+                                if (value == true) {
+                                  tempFilters.add('New');
+                                } else {
+                                  tempFilters.remove('New');
+                                }
+                              });
+                            },
+                            activeColor: AppColors.primary,
+                          ),
+                        ),
+                        // Follow-Up option
+                        ListTile(
+                          leading: Icon(
+                            Icons.update,
+                            color: tempFilters.contains('Follow-Up')
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('Follow-Up'),
+                          trailing: Checkbox(
+                            value: tempFilters.contains('Follow-Up'),
+                            onChanged: (value) {
+                              setModalState(() {
+                                if (value == true) {
+                                  tempFilters.add('Follow-Up');
+                                } else {
+                                  tempFilters.remove('Follow-Up');
+                                }
+                              });
+                            },
+                            activeColor: AppColors.primary,
+                          ),
+                        ),
+                        const Divider(),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Filter by Status',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // PENDING option
+                        ListTile(
+                          leading: Icon(
+                            Icons.pending,
+                            color: tempStatusFilters.contains('PENDING')
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('Pending'),
+                          trailing: Checkbox(
+                            value: tempStatusFilters.contains('PENDING'),
+                            onChanged: (value) {
+                              setModalState(() {
+                                if (value == true) {
+                                  tempStatusFilters.add('PENDING');
+                                } else {
+                                  tempStatusFilters.remove('PENDING');
+                                }
+                              });
+                            },
+                            activeColor: AppColors.primary,
+                          ),
+                        ),
+                        // COMPLETED option
+                        ListTile(
+                          leading: Icon(
+                            Icons.check_circle,
+                            color: tempStatusFilters.contains('COMPLETED')
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('Completed'),
+                          trailing: Checkbox(
+                            value: tempStatusFilters.contains('COMPLETED'),
+                            onChanged: (value) {
+                              setModalState(() {
+                                if (value == true) {
+                                  tempStatusFilters.add('COMPLETED');
+                                } else {
+                                  tempStatusFilters.remove('COMPLETED');
+                                }
+                              });
+                            },
+                            activeColor: AppColors.primary,
+                          ),
+                        ),
+                        // SURGERY_RECOMMENDED option
+                        ListTile(
+                          leading: Icon(
+                            Icons.medical_services,
+                            color:
+                                tempStatusFilters.contains(
+                                  'SURGERY_RECOMMENDED',
+                                )
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('Surgery Recommended'),
+                          trailing: Checkbox(
+                            value: tempStatusFilters.contains(
+                              'SURGERY_RECOMMENDED',
+                            ),
+                            onChanged: (value) {
+                              setModalState(() {
+                                if (value == true) {
+                                  tempStatusFilters.add('SURGERY_RECOMMENDED');
+                                } else {
+                                  tempStatusFilters.remove(
+                                    'SURGERY_RECOMMENDED',
+                                  );
+                                }
+                              });
+                            },
+                            activeColor: AppColors.primary,
+                          ),
+                        ),
+                      ],
                     ),
-                    title: const Text('Finished'),
-                    trailing: Checkbox(
-                      value: tempFilters.contains('Finished'),
-                      onChanged: (value) {
-                        setModalState(() {
-                          if (value == true) {
-                            tempFilters.add('Finished');
-                          } else {
-                            tempFilters.remove('Finished');
-                          }
-                        });
-                      },
-                      activeColor: AppColors.primary,
-                    ),
                   ),
-                const SizedBox(height: 20),
-                // Apply button
+                ),
+                // Apply button (fixed at bottom)
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  padding: const EdgeInsets.all(20),
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: () {
                         setState(() {
-                          if (isUpcoming) {
-                            _selectedUpcomingFilters = Set<String>.from(
-                              tempFilters,
-                            );
-                          } else {
-                            _selectedFilters = Set<String>.from(tempFilters);
-                          }
+                          _selectedFilters = Set<String>.from(tempFilters);
+                          _selectedStatusFilters = Set<String>.from(
+                            tempStatusFilters,
+                          );
+                          _showTodayOnly = tempShowTodayOnly;
                         });
                         Navigator.pop(context);
                       },
@@ -648,7 +826,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
               ],
             ),
           );
@@ -686,37 +863,42 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Welcome Back',
-                          style: TextStyle(color: Colors.white, fontSize: 16),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Dr ${widget.userName.split(' ').map((word) => word[0].toUpperCase() + word.substring(1)).join(' ')}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Welcome Back',
+                            style: TextStyle(color: Colors.white, fontSize: 16),
                           ),
-                        ),
-                      ],
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        shape: BoxShape.circle,
+                          const SizedBox(height: 4),
+                          Text(
+                            'Dr ${widget.userName.split(' ').map((word) => word[0].toUpperCase() + word.substring(1)).join(' ')}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                       ),
-                      child: const Icon(
-                        Icons.notifications_outlined,
-                        color: Colors.white,
-                        size: 24,
-                      ),
                     ),
+                    // Container(
+                    //   padding: const EdgeInsets.all(10),
+                    //   decoration: BoxDecoration(
+                    //     color: Colors.white.withValues(alpha: 0.2),
+                    //     shape: BoxShape.circle,
+                    //   ),
+                    //   child: const Icon(
+                    //     Icons.notifications_outlined,
+                    //     color: Colors.white,
+                    //     size: 24,
+                    //   ),
+                    // ),
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -753,7 +935,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
                           Text(
-                            '${_filteredAppointments.length}',
+                            '${_appointments.length}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 18,
@@ -771,7 +953,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           // Today's Schedule section
           Expanded(
             child: RefreshIndicator(
-              onRefresh: _loadAppointments,
+              onRefresh: () async {
+                // Reset error state and reload
+                setState(() {
+                  _isRefreshing = false;
+                });
+                await _loadAppointments(isInitialLoad: true);
+              },
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
                 child: Column(
@@ -781,7 +969,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text(
-                          "Today's Schedule",
+                          "Appointments",
                           style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
@@ -791,13 +979,146 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         IconButton(
                           icon: Icon(
                             Icons.filter_list,
-                            color: _selectedFilters.isNotEmpty
+                            color:
+                                (_selectedFilters.isNotEmpty ||
+                                    _selectedStatusFilters.isNotEmpty ||
+                                    _showTodayOnly)
                                 ? AppColors.primary
                                 : Colors.grey,
                           ),
                           onPressed: _showFilterMenu,
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 12),
+                    // Filter chips
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          // Today filter chip
+                          FilterChip(
+                            label: const Text('Today'),
+                            selected: _showTodayOnly,
+                            onSelected: (selected) {
+                              setState(() {
+                                _showTodayOnly = selected;
+                              });
+                            },
+                            selectedColor: AppColors.primary.withValues(
+                              alpha: 0.2,
+                            ),
+                            checkmarkColor: AppColors.primary,
+                            labelStyle: TextStyle(
+                              color: _showTodayOnly
+                                  ? AppColors.primary
+                                  : Colors.grey.shade700,
+                              fontWeight: _showTodayOnly
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Appointment Type filter chips
+                          if (_selectedFilters.isEmpty)
+                            FilterChip(
+                              label: const Text('All Types'),
+                              selected: true,
+                              onSelected: null,
+                              selectedColor: AppColors.primary.withValues(
+                                alpha: 0.2,
+                              ),
+                              checkmarkColor: AppColors.primary,
+                              labelStyle: const TextStyle(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            )
+                          else
+                            ...['New', 'Follow-Up', 'Finished']
+                                .where(
+                                  (status) => _selectedFilters.contains(status),
+                                )
+                                .map(
+                                  (status) => Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: FilterChip(
+                                      label: Text(status),
+                                      selected: true,
+                                      onSelected: (selected) {
+                                        setState(() {
+                                          if (!selected) {
+                                            _selectedFilters.remove(status);
+                                          }
+                                        });
+                                      },
+                                      selectedColor: AppColors.primary
+                                          .withValues(alpha: 0.2),
+                                      checkmarkColor: AppColors.primary,
+                                      deleteIcon: const Icon(
+                                        Icons.close,
+                                        size: 18,
+                                      ),
+                                      onDeleted: () {
+                                        setState(() {
+                                          _selectedFilters.remove(status);
+                                        });
+                                      },
+                                      labelStyle: const TextStyle(
+                                        color: AppColors.primary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                          const SizedBox(width: 8),
+                          // Status filter chips (COMPLETED, PENDING, SURGERY_RECOMMENDED)
+                          ...['PENDING', 'COMPLETED', 'SURGERY_RECOMMENDED']
+                              .where(
+                                (status) =>
+                                    _selectedStatusFilters.contains(status),
+                              )
+                              .map(
+                                (status) => Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: FilterChip(
+                                    label: Text(
+                                      status == 'SURGERY_RECOMMENDED'
+                                          ? 'Surgery'
+                                          : status == 'PENDING'
+                                          ? 'Pending'
+                                          : 'Completed',
+                                    ),
+                                    selected: true,
+                                    onSelected: (selected) {
+                                      setState(() {
+                                        if (!selected) {
+                                          _selectedStatusFilters.remove(status);
+                                        }
+                                      });
+                                    },
+                                    selectedColor: AppColors.primary.withValues(
+                                      alpha: 0.2,
+                                    ),
+                                    checkmarkColor: AppColors.primary,
+                                    deleteIcon: const Icon(
+                                      Icons.close,
+                                      size: 18,
+                                    ),
+                                    onDeleted: () {
+                                      setState(() {
+                                        _selectedStatusFilters.remove(status);
+                                      });
+                                    },
+                                    labelStyle: const TextStyle(
+                                      color: AppColors.primary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 16),
                     // Loading indicator or Appointment cards
@@ -897,8 +1218,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                             ),
                                           ),
                                           const SizedBox(height: 8),
+                                          // Date, Time and Issues in same row
                                           Row(
                                             children: [
+                                              // Date
+                                              Icon(
+                                                Icons.calendar_today,
+                                                size: 14,
+                                                color: AppColors.primary,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                _formatAppointmentDate(
+                                                  appointment['date']
+                                                          as String? ??
+                                                      '',
+                                                ),
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey.shade700,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 5),
+                                              // Time
                                               Icon(
                                                 Icons.access_time_filled,
                                                 size: 16,
@@ -912,31 +1255,37 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                                   color: Colors.grey.shade700,
                                                 ),
                                               ),
-                                              const SizedBox(width: 16),
-                                              SvgPicture.asset(
-                                                'assets/images/stethoscope.svg',
-                                                width: 16,
-                                                height: 16,
-                                                colorFilter: ColorFilter.mode(
-                                                  AppColors.primary,
-                                                  BlendMode.srcIn,
+                                              if (appointment['issues'] !=
+                                                      null &&
+                                                  (appointment['issues']
+                                                          as String)
+                                                      .isNotEmpty) ...[
+                                                const SizedBox(width: 16),
+                                                SvgPicture.asset(
+                                                  'assets/images/stethoscope.svg',
+                                                  width: 16,
+                                                  height: 16,
+                                                  colorFilter: ColorFilter.mode(
+                                                    AppColors.primary,
+                                                    BlendMode.srcIn,
+                                                  ),
                                                 ),
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                appointment['issues'] != null &&
-                                                        (appointment['issues']
-                                                                as String)
-                                                            .isNotEmpty
-                                                    ? appointment['issues']
-                                                          as String
-                                                    : appointment['type']
-                                                          as String,
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.grey.shade700,
+                                                const SizedBox(width: 4),
+                                                Expanded(
+                                                  child: Text(
+                                                    appointment['issues']
+                                                        as String,
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color:
+                                                          Colors.grey.shade700,
+                                                    ),
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
                                                 ),
-                                              ),
+                                              ],
                                             ],
                                           ),
                                         ],
@@ -944,7 +1293,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                     ),
                                   ],
                                 ),
-                                // Status badge at top right
+                                // Appointment Type badge at top right
                                 Positioned(
                                   top: 0,
                                   right: 0,
@@ -958,199 +1307,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                       borderRadius: BorderRadius.circular(4),
                                     ),
                                     child: Text(
-                                      appointment['status'] as String,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }),
-                    const SizedBox(height: 32),
-                    // Upcoming Appointments section
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          "Upcoming Appointments",
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF333333),
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            Icons.filter_list,
-                            color: _selectedUpcomingFilters.isNotEmpty
-                                ? AppColors.primary
-                                : Colors.grey,
-                          ),
-                          onPressed: () => _showFilterMenu(isUpcoming: true),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    // Upcoming Appointment cards
-                    if (_filteredUpcomingAppointments.isEmpty)
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(40.0),
-                          child: Column(
-                            children: [
-                              Icon(
-                                Icons.event_busy,
-                                size: 64,
-                                color: Colors.grey.shade400,
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'No upcoming appointments found',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    else
-                      ..._filteredUpcomingAppointments.map((appointment) {
-                        final bookingId = appointment['booking_id'] as int?;
-                        print(
-                          '📋 Upcoming appointment card - booking_id: $bookingId',
-                        );
-                        return InkWell(
-                          onTap: bookingId != null
-                              ? () {
-                                  print(
-                                    '🔵 Clicked upcoming appointment with booking_id: $bookingId',
-                                  );
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          AppointmentDetailsPage(
-                                            bookingId: bookingId,
-                                          ),
-                                    ),
-                                  );
-                                }
-                              : null,
-                          borderRadius: BorderRadius.circular(16),
-                          child: Container(
-                            margin: const EdgeInsets.only(bottom: 16),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: AppColors.cardBackground,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Stack(
-                              children: [
-                                Row(
-                                  children: [
-                                    // Avatar
-                                    CircleAvatar(
-                                      radius: 30,
-                                      backgroundColor: Colors.white,
-                                      child: Icon(
-                                        appointment['avatar'] as IconData,
-                                        color: AppColors.primary,
-                                        size: 30,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 16),
-                                    // Details
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            appointment['name'] as String,
-                                            style: const TextStyle(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
-                                              color: Color(0xFF333333),
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            'ID: ${appointment['id']}',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.grey.shade600,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Row(
-                                            children: [
-                                              Icon(
-                                                Icons.access_time_filled,
-                                                size: 16,
-                                                color: AppColors.primary,
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                appointment['time'] as String,
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.grey.shade700,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 16),
-                                              SvgPicture.asset(
-                                                'assets/images/stethoscope.svg',
-                                                width: 16,
-                                                height: 16,
-                                                colorFilter: ColorFilter.mode(
-                                                  AppColors.primary,
-                                                  BlendMode.srcIn,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                appointment['issues'] != null &&
-                                                        (appointment['issues']
-                                                                as String)
-                                                            .isNotEmpty
-                                                    ? appointment['issues']
-                                                          as String
-                                                    : appointment['type']
-                                                          as String,
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.grey.shade700,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                // Status badge at top right
-                                Positioned(
-                                  top: 0,
-                                  right: 0,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.primary,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      appointment['status'] as String,
+                                      appointment['type'] as String? ??
+                                          'Consultation',
                                       style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 10,

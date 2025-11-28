@@ -94,6 +94,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
         setState(() {
           _todaySurgeries = _parseSurgeries(today);
           _upcomingSurgeries = _parseSurgeries(upcoming);
+          _errorMessage = null; // Clear any previous errors
           if (isInitialLoad) {
             _isLoading = false;
           }
@@ -101,10 +102,11 @@ class _SurgeriesPageState extends State<SurgeriesPage>
       } else {
         setState(() {
           _errorMessage = 'Failed to load surgeries';
-          if (isInitialLoad) {
-            _isLoading = false;
-          }
+          _isLoading = false;
+          _isRefreshing = false; // Reset refreshing flag on error
         });
+        // Don't continue loading other data if main request failed
+        return;
       }
     } on DioException catch (e) {
       print('Error loading surgeries: ${e.type} - ${e.message}');
@@ -144,18 +146,23 @@ class _SurgeriesPageState extends State<SurgeriesPage>
 
       setState(() {
         _errorMessage = errorMessage;
-        if (isInitialLoad) {
-          _isLoading = false;
-        }
+        _isLoading = false;
+        _isRefreshing = false; // Reset refreshing flag on error
       });
+      // Don't continue loading other data if main request failed
+      return;
     } catch (e) {
       print('Unexpected error loading surgeries: $e');
       setState(() {
         _errorMessage = 'An unexpected error occurred. Please try again.';
         _isLoading = false;
+        _isRefreshing = false; // Reset refreshing flag on error
       });
+      // Don't continue loading other data if main request failed
+      return;
     }
 
+    // Only load unassigned and completed if main request was successful
     // Load unassigned surgeries
     try {
       final unassignedResponse = await ApiMethods.getUnassignedSurgeries();
@@ -168,6 +175,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
       }
     } catch (e) {
       print('Error loading unassigned surgeries: $e');
+      // Don't set error message here, just log it
     }
 
     // Load finished/completed surgeries
@@ -184,6 +192,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
       }
     } catch (e) {
       print('Error loading completed surgeries: $e');
+      // Don't set error message here, just log it
     } finally {
       // Always reset refreshing flag
       _isRefreshing = false;
@@ -404,21 +413,42 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                   child: _FilterTab(
                     label: 'Upcoming',
                     isSelected: _selectedTab == 0,
-                    onTap: () => setState(() => _selectedTab = 0),
+                    onTap: () {
+                      final previousTab = _selectedTab;
+                      setState(() => _selectedTab = 0);
+                      // Refresh data when switching tabs
+                      if (previousTab != 0) {
+                        _loadSurgeries(isInitialLoad: false);
+                      }
+                    },
                   ),
                 ),
                 Expanded(
                   child: _FilterTab(
                     label: 'Finished',
                     isSelected: _selectedTab == 1,
-                    onTap: () => setState(() => _selectedTab = 1),
+                    onTap: () {
+                      final previousTab = _selectedTab;
+                      setState(() => _selectedTab = 1);
+                      // Refresh data when switching tabs
+                      if (previousTab != 1) {
+                        _loadSurgeries(isInitialLoad: false);
+                      }
+                    },
                   ),
                 ),
                 Expanded(
                   child: _FilterTab(
                     label: 'Unassigned',
                     isSelected: _selectedTab == 2,
-                    onTap: () => setState(() => _selectedTab = 2),
+                    onTap: () {
+                      final previousTab = _selectedTab;
+                      setState(() => _selectedTab = 2);
+                      // Refresh data when switching tabs (especially important for unassigned)
+                      if (previousTab != 2) {
+                        _loadSurgeries(isInitialLoad: false);
+                      }
+                    },
                   ),
                 ),
               ],
@@ -439,7 +469,19 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                         ),
                         const SizedBox(height: 16),
                         ElevatedButton(
-                          onPressed: _loadSurgeries,
+                          onPressed: () {
+                            // Reset error state and reload
+                            setState(() {
+                              _errorMessage = null;
+                              _isLoading = true;
+                              _isRefreshing = false; // Reset refreshing flag
+                            });
+                            _loadSurgeries(isInitialLoad: true);
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                          ),
                           child: const Text('Retry'),
                         ),
                       ],
@@ -458,117 +500,150 @@ class _SurgeriesPageState extends State<SurgeriesPage>
       final filteredToday = _applySearchFilter(_todaySurgeries);
       final filteredUpcoming = _applySearchFilter(_upcomingSurgeries);
 
-      if (filteredToday.isEmpty && filteredUpcoming.isEmpty) {
-        return const Center(child: Text('No upcoming surgeries'));
-      }
-
       return RefreshIndicator(
-        onRefresh: _loadSurgeries,
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          children: [
-            // Today's Surgeries Section - Always show
-            Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 12),
-              child: Text(
-                "Today's Surgeries",
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary,
-                ),
-              ),
-            ),
-            if (filteredToday.isNotEmpty)
-              ...filteredToday.map(
-                (surgery) => _SurgeryCard(
-                  name: surgery['name'] as String,
-                  procedure: surgery['procedure'] as String,
-                  date: surgery['formatted_date'] as String,
-                  status: surgery['status'] as String?,
-                  surgery: surgery,
-                  isTodaysSurgery: true,
-                  onStatusChange: () => _loadSurgeries(),
-                ),
-              )
-            else
-              Container(
-                padding: const EdgeInsets.all(24),
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: AppColors.cardBackground,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Center(
-                  child: Text(
-                    'No surgeries found today',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey.shade600,
-                      fontStyle: FontStyle.italic,
+        onRefresh: () async {
+          await _loadSurgeries(isInitialLoad: false);
+        },
+        child: filteredToday.isEmpty && filteredUpcoming.isEmpty
+            ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: const Center(
+                      child: Text(
+                        'No upcoming surgeries',
+                        style: TextStyle(fontSize: 16, color: Colors.grey),
+                      ),
                     ),
                   ),
-                ),
-              ),
-            // Upcoming Surgeries Section
-            if (filteredUpcoming.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.only(top: 8, bottom: 12),
-                child: Text(
-                  'Upcoming Surgeries',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
+                ],
+              )
+            : ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                children: [
+                  // Today's Surgeries Section - Always show
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8, bottom: 12),
+                    child: Text(
+                      "Today's Surgeries",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
                   ),
-                ),
+                  if (filteredToday.isNotEmpty)
+                    ...filteredToday.map(
+                      (surgery) => _SurgeryCard(
+                        name: surgery['name'] as String,
+                        procedure: surgery['procedure'] as String,
+                        date: surgery['formatted_date'] as String,
+                        status: surgery['status'] as String?,
+                        surgery: surgery,
+                        isTodaysSurgery: true,
+                        onStatusChange: () => _loadSurgeries(),
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.all(24),
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: AppColors.cardBackground,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'No surgeries found today',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey.shade600,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ),
+                    ),
+                  // Upcoming Surgeries Section
+                  if (filteredUpcoming.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, bottom: 12),
+                      child: Text(
+                        'Upcoming Surgeries',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ),
+                    ...filteredUpcoming.map(
+                      (surgery) => _SurgeryCard(
+                        name: surgery['name'] as String,
+                        procedure: surgery['procedure'] as String,
+                        date: surgery['formatted_date'] as String,
+                        status: surgery['status'] as String?,
+                        surgery: surgery,
+                        isTodaysSurgery: true,
+                        onStatusChange: () => _loadSurgeries(),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                ],
               ),
-              ...filteredUpcoming.map(
-                (surgery) => _SurgeryCard(
-                  name: surgery['name'] as String,
-                  procedure: surgery['procedure'] as String,
-                  date: surgery['formatted_date'] as String,
-                  status: surgery['status'] as String?,
-                  surgery: surgery,
-                  isTodaysSurgery: true,
-                  onStatusChange: () => _loadSurgeries(),
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-          ],
-        ),
       );
     } else {
       // Other tabs: Finished or Unassigned
       final filtered = _filteredSurgeries;
-      if (filtered.isEmpty) {
-        return const Center(child: Text('No surgeries found'));
-      }
 
       return RefreshIndicator(
-        onRefresh: _loadSurgeries,
-        child: ListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          itemCount: filtered.length,
-          itemBuilder: (context, index) {
-            final surgery = filtered[index];
-            return _SurgeryCard(
-              name: surgery['name'] as String,
-              procedure: surgery['procedure'] as String,
-              date: surgery['formatted_date'] as String,
-              isUnassigned: _selectedTab == 2,
-              onAssign: _selectedTab == 2
-                  ? () => _showAssignDateDialog(surgery)
-                  : null,
-              status: surgery['status'] as String?,
-              surgery: surgery,
-              isTodaysSurgery: false,
-              onStatusChange: null,
-            );
-          },
-        ),
+        onRefresh: () async {
+          await _loadSurgeries(isInitialLoad: false);
+        },
+        child: filtered.isEmpty
+            ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: Center(
+                      child: Text(
+                        _selectedTab == 2
+                            ? 'No unassigned surgeries'
+                            : 'No finished surgeries',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: filtered.length,
+                itemBuilder: (context, index) {
+                  final surgery = filtered[index];
+                  return _SurgeryCard(
+                    name: surgery['name'] as String,
+                    procedure: surgery['procedure'] as String,
+                    date: surgery['formatted_date'] as String,
+                    isUnassigned: _selectedTab == 2,
+                    onAssign: _selectedTab == 2
+                        ? () => _showAssignDateDialog(surgery)
+                        : null,
+                    status: surgery['status'] as String?,
+                    surgery: surgery,
+                    isTodaysSurgery: false,
+                    onStatusChange: null,
+                  );
+                },
+              ),
       );
     }
   }
@@ -1208,8 +1283,10 @@ class _StatusDialogState extends State<_StatusDialog> {
   List<String> _getAvailableStatusOptions() {
     final currentStatus = widget.currentStatus?.toUpperCase() ?? '';
 
-    // If status is SCHEDULED or SHEDULED, only allow ONGOING or CANCELLED
-    if (currentStatus == 'SCHEDULED' || currentStatus == 'SHEDULED') {
+    // If status is SCHEDULED, SHEDULED, or RESCHEDULED, only allow ONGOING or CANCELLED
+    if (currentStatus == 'SCHEDULED' ||
+        currentStatus == 'SHEDULED' ||
+        currentStatus == 'RESCHEDULED') {
       return ['ONGOING', 'CANCELLED'];
     }
 
@@ -1384,6 +1461,295 @@ class _StatusDialogState extends State<_StatusDialog> {
                   ),
                 )
               : const Text('Update'),
+        ),
+      ],
+    );
+  }
+}
+
+class _RescheduleDialog extends StatefulWidget {
+  const _RescheduleDialog({required this.surgery, required this.onRescheduled});
+
+  final Map<String, dynamic> surgery;
+  final VoidCallback onRescheduled;
+
+  @override
+  State<_RescheduleDialog> createState() => _RescheduleDialogState();
+}
+
+class _RescheduleDialogState extends State<_RescheduleDialog> {
+  DateTime? _selectedDate;
+  TimeOfDay? _selectedTime;
+  final TextEditingController _reasonController = TextEditingController();
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _selectDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? DateTime.now(),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: AppColors.primary,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: AppColors.textPrimary,
+            ),
+            dialogBackgroundColor: Colors.white,
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedDate = picked;
+      });
+    }
+  }
+
+  Future<void> _selectTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? TimeOfDay.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: AppColors.primary,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: AppColors.textPrimary,
+            ),
+            dialogBackgroundColor: Colors.white,
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedTime = picked;
+      });
+    }
+  }
+
+  Future<void> _reschedule() async {
+    if (_selectedDate == null || _selectedTime == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select both date and time'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (_reasonController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please provide a reason for rescheduling'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Combine date and time into ISO 8601 format
+      final dateTime = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+        _selectedTime!.hour,
+        _selectedTime!.minute,
+      );
+      final isoDate = dateTime.toIso8601String().split(
+        '.',
+      )[0]; // Remove milliseconds
+
+      final surgeryId = widget.surgery['id'] as int;
+      final response = await ApiMethods.rescheduleSurgery(
+        surgeryId: surgeryId,
+        newDate: isoDate,
+        reason: _reasonController.text.trim(),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        Navigator.of(context).pop();
+        widget.onRescheduled();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Surgery rescheduled successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        throw Exception('Failed to reschedule surgery');
+      }
+    } catch (e) {
+      print('Error rescheduling surgery: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.white,
+      title: Text(
+        'Reschedule Surgery',
+        style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold),
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Patient: ${widget.surgery['name']}',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 24),
+            // Date picker
+            InkWell(
+              onTap: _selectDate,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.calendar_today,
+                      color: AppColors.primary,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      _selectedDate == null
+                          ? 'Select New Date'
+                          : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: _selectedDate == null
+                            ? Colors.grey.shade600
+                            : AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Time picker
+            InkWell(
+              onTap: _selectTime,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.access_time, color: AppColors.primary, size: 20),
+                    const SizedBox(width: 12),
+                    Text(
+                      _selectedTime == null
+                          ? 'Select New Time'
+                          : _selectedTime!.format(context),
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: _selectedTime == null
+                            ? Colors.grey.shade600
+                            : AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Reason field
+            TextField(
+              controller: _reasonController,
+              decoration: InputDecoration(
+                labelText: 'Reason for Rescheduling',
+                hintText: 'Enter reason...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppColors.primary, width: 2),
+                ),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _isLoading ? null : _reschedule,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          child: _isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('Reschedule'),
         ),
       ],
     );

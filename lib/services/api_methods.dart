@@ -293,6 +293,24 @@ class ApiMethods {
     );
   }
 
+  /// Reschedule Surgery
+  /// POST /v1/doctor/surgery/reschedule
+  /// Body: { "surgery_id": int, "new_date": "2025-12-05T14:30:00", "reason": "string" }
+  static Future<Response> rescheduleSurgery({
+    required int surgeryId,
+    required String newDate, // ISO 8601 format: "2025-12-05T14:30:00"
+    required String reason,
+  }) async {
+    return await _api.post(
+      '/v1/doctor/surgery/reschedule',
+      data: {
+        'surgery_id': surgeryId,
+        'new_date': newDate,
+        'reason': reason,
+      },
+    );
+  }
+
   /// Get Surgeries List (filter by status only - then filter locally)
   /// GET /surgeries?status=ongoing
   static Future<Response> getSurgeries({
