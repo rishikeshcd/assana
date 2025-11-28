@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../../theme/app_colors.dart';
 import '../../services/api_methods.dart';
 import 'medical_report_viewer_page.dart';
@@ -12,24 +13,68 @@ class AppointmentDetailsPage extends StatefulWidget {
   State<AppointmentDetailsPage> createState() => _AppointmentDetailsPageState();
 }
 
-class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
+class _AppointmentDetailsPageState extends State<AppointmentDetailsPage>
+    with WidgetsBindingObserver {
   bool _isLoading = true;
   Map<String, dynamic>? _bookingData;
   Map<String, dynamic>? _patientData;
   List<dynamic>? _appointmentHistory;
   String? _errorMessage;
+  Timer? _refreshTimer;
+  bool _isRefreshing = false;
 
   @override
   void initState() {
     super.initState();
-    _loadBookingDetails();
+    WidgetsBinding.instance.addObserver(this);
+    _loadBookingDetails(isInitialLoad: true);
+    // Auto-refresh every 40 seconds (only when screen is active)
+    _refreshTimer = Timer.periodic(const Duration(seconds: 40), (timer) {
+      if (mounted && _isRouteActive()) {
+        print('⏰ AppointmentDetailsPage: Auto-refresh timer triggered');
+        _loadBookingDetails(isInitialLoad: false);
+      }
+    });
   }
 
-  Future<void> _loadBookingDetails() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Refresh when app comes to foreground and this route is active
+    if (state == AppLifecycleState.resumed && mounted && _isRouteActive()) {
+      print('🔄 AppointmentDetailsPage: App resumed, refreshing data');
+      _loadBookingDetails(isInitialLoad: false);
+    }
+  }
+
+  // Check if this route is currently active/visible
+  bool _isRouteActive() {
+    final route = ModalRoute.of(context);
+    return route?.isCurrent ?? false;
+  }
+
+  Future<void> _loadBookingDetails({bool isInitialLoad = false}) async {
+    // Prevent multiple simultaneous API calls
+    if (_isRefreshing && !isInitialLoad) {
+      print('⏸️ AppointmentDetailsPage: Refresh already in progress, skipping...');
+      return;
+    }
+
+    if (isInitialLoad) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    } else {
+      _isRefreshing = true;
+    }
 
     try {
       print('📋 Loading booking details for ID: ${widget.bookingId}');
@@ -47,21 +92,29 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           _bookingData = result['booking'] as Map<String, dynamic>?;
           _patientData = result['patient'] as Map<String, dynamic>?;
           _appointmentHistory = result['appointment_history'] as List<dynamic>?;
-          _isLoading = false;
+          if (isInitialLoad) {
+            _isLoading = false;
+          }
         });
       } else {
         print('❌ API returned error or invalid response');
         setState(() {
           _errorMessage = 'Failed to load appointment details';
-          _isLoading = false;
+          if (isInitialLoad) {
+            _isLoading = false;
+          }
         });
       }
     } catch (e) {
       print('❌ Error loading appointment details: $e');
       setState(() {
         _errorMessage = 'Error loading appointment details: ${e.toString()}';
-        _isLoading = false;
+        if (isInitialLoad) {
+          _isLoading = false;
+        }
       });
+    } finally {
+      _isRefreshing = false;
     }
   }
 

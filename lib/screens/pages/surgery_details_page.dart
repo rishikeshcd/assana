@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../../theme/app_colors.dart';
 import '../../services/api_methods.dart';
 import 'medical_report_viewer_page.dart';
@@ -12,24 +13,68 @@ class SurgeryDetailsPage extends StatefulWidget {
   State<SurgeryDetailsPage> createState() => _SurgeryDetailsPageState();
 }
 
-class _SurgeryDetailsPageState extends State<SurgeryDetailsPage> {
+class _SurgeryDetailsPageState extends State<SurgeryDetailsPage>
+    with WidgetsBindingObserver {
   bool _isLoading = true;
   Map<String, dynamic>? _surgeryData;
   Map<String, dynamic>? _appointmentData;
   Map<String, dynamic>? _prescriptionData;
   String? _errorMessage;
+  Timer? _refreshTimer;
+  bool _isRefreshing = false;
 
   @override
   void initState() {
     super.initState();
-    _loadSurgeryDetails();
+    WidgetsBinding.instance.addObserver(this);
+    _loadSurgeryDetails(isInitialLoad: true);
+    // Auto-refresh every 40 seconds (only when screen is active)
+    _refreshTimer = Timer.periodic(const Duration(seconds: 40), (timer) {
+      if (mounted && _isRouteActive()) {
+        print('⏰ SurgeryDetailsPage: Auto-refresh timer triggered');
+        _loadSurgeryDetails(isInitialLoad: false);
+      }
+    });
   }
 
-  Future<void> _loadSurgeryDetails() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Refresh when app comes to foreground and this route is active
+    if (state == AppLifecycleState.resumed && mounted && _isRouteActive()) {
+      print('🔄 SurgeryDetailsPage: App resumed, refreshing data');
+      _loadSurgeryDetails(isInitialLoad: false);
+    }
+  }
+
+  // Check if this route is currently active/visible
+  bool _isRouteActive() {
+    final route = ModalRoute.of(context);
+    return route?.isCurrent ?? false;
+  }
+
+  Future<void> _loadSurgeryDetails({bool isInitialLoad = false}) async {
+    // Prevent multiple simultaneous API calls
+    if (_isRefreshing && !isInitialLoad) {
+      print('⏸️ SurgeryDetailsPage: Refresh already in progress, skipping...');
+      return;
+    }
+
+    if (isInitialLoad) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    } else {
+      _isRefreshing = true;
+    }
 
     try {
       final response = await ApiMethods.getSurgeryDetails(widget.surgeryId);
@@ -43,20 +88,28 @@ class _SurgeryDetailsPageState extends State<SurgeryDetailsPage> {
           _surgeryData = result['surgery'] as Map<String, dynamic>?;
           _appointmentData = result['appointment'] as Map<String, dynamic>?;
           _prescriptionData = result['prescription'] as Map<String, dynamic>?;
-          _isLoading = false;
+          if (isInitialLoad) {
+            _isLoading = false;
+          }
         });
       } else {
         setState(() {
           _errorMessage = 'Failed to load surgery details';
-          _isLoading = false;
+          if (isInitialLoad) {
+            _isLoading = false;
+          }
         });
       }
     } catch (e) {
       print('Error loading surgery details: $e');
       setState(() {
         _errorMessage = 'Error loading surgery details: ${e.toString()}';
-        _isLoading = false;
+        if (isInitialLoad) {
+          _isLoading = false;
+        }
       });
+    } finally {
+      _isRefreshing = false;
     }
   }
 

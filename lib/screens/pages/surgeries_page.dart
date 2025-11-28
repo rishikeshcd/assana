@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'dart:async';
 import '../../theme/app_colors.dart';
 import '../../services/api_methods.dart';
 import 'surgery_details_page.dart';
@@ -11,7 +12,8 @@ class SurgeriesPage extends StatefulWidget {
   State<SurgeriesPage> createState() => _SurgeriesPageState();
 }
 
-class _SurgeriesPageState extends State<SurgeriesPage> {
+class _SurgeriesPageState extends State<SurgeriesPage>
+    with WidgetsBindingObserver {
   int _selectedTab = 0; // 0: Upcoming, 1: Finished, 2: Unassigned
   final TextEditingController _searchController = TextEditingController();
   bool _isSearchVisible = false;
@@ -21,18 +23,64 @@ class _SurgeriesPageState extends State<SurgeriesPage> {
   List<Map<String, dynamic>> _finishedSurgeries = [];
   List<Map<String, dynamic>> _unassignedSurgeries = [];
   String? _errorMessage;
+  Timer? _refreshTimer;
+  bool _isRefreshing = false; // Prevent multiple simultaneous refreshes
 
   @override
   void initState() {
     super.initState();
-    _loadSurgeries();
+    WidgetsBinding.instance.addObserver(this);
+    _loadSurgeries(isInitialLoad: true);
+    // Auto-refresh surgeries every 40 seconds (only when screen is active)
+    _refreshTimer = Timer.periodic(const Duration(seconds: 40), (timer) {
+      if (mounted && _isRouteActive()) {
+        print('⏰ SurgeriesPage: Auto-refresh timer triggered');
+        _loadSurgeries(isInitialLoad: false);
+      }
+    });
   }
 
-  Future<void> _loadSurgeries() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _refreshTimer?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Refresh when app comes to foreground and this route is active
+    if (state == AppLifecycleState.resumed && mounted && _isRouteActive()) {
+      print('🔄 SurgeriesPage: App resumed, refreshing data');
+      _loadSurgeries(isInitialLoad: false);
+    }
+  }
+
+  // Check if this route is currently active/visible
+  bool _isRouteActive() {
+    final route = ModalRoute.of(context);
+    return route?.isCurrent ?? false;
+  }
+
+  Future<void> _loadSurgeries({bool isInitialLoad = false}) async {
+    // Prevent multiple simultaneous API calls
+    if (_isRefreshing && !isInitialLoad) {
+      print('⏸️ SurgeriesPage: Refresh already in progress, skipping...');
+      return;
+    }
+
+    // Only show loading indicator on initial load
+    if (isInitialLoad) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    } else {
+      // Mark as refreshing for background updates
+      _isRefreshing = true;
+    }
 
     try {
       // Load upcoming surgeries (today + upcoming)
@@ -46,12 +94,16 @@ class _SurgeriesPageState extends State<SurgeriesPage> {
         setState(() {
           _todaySurgeries = _parseSurgeries(today);
           _upcomingSurgeries = _parseSurgeries(upcoming);
-          _isLoading = false;
+          if (isInitialLoad) {
+            _isLoading = false;
+          }
         });
       } else {
         setState(() {
           _errorMessage = 'Failed to load surgeries';
-          _isLoading = false;
+          if (isInitialLoad) {
+            _isLoading = false;
+          }
         });
       }
     } on DioException catch (e) {
@@ -92,7 +144,9 @@ class _SurgeriesPageState extends State<SurgeriesPage> {
 
       setState(() {
         _errorMessage = errorMessage;
-        _isLoading = false;
+        if (isInitialLoad) {
+          _isLoading = false;
+        }
       });
     } catch (e) {
       print('Unexpected error loading surgeries: $e');
@@ -130,6 +184,9 @@ class _SurgeriesPageState extends State<SurgeriesPage> {
       }
     } catch (e) {
       print('Error loading completed surgeries: $e');
+    } finally {
+      // Always reset refreshing flag
+      _isRefreshing = false;
     }
   }
 
@@ -235,12 +292,6 @@ class _SurgeriesPageState extends State<SurgeriesPage> {
     }
 
     return surgeries;
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
   }
 
   @override
@@ -624,47 +675,44 @@ class _SurgeryCard extends StatelessWidget {
         color: AppColors.cardBackground,
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Stack(
-        children: [
-          // Clickable content area
-          InkWell(
-            onTap: surgery != null && surgery!['id'] != null
-                ? () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => SurgeryDetailsPage(
-                          surgeryId: surgery!['id'] as int,
-                        ),
-                      ),
-                    );
-                  }
-                : null,
-            borderRadius: BorderRadius.circular(16),
-            child: Padding(
-              padding: const EdgeInsets.only(right: 100), // Space for button
-              child: Row(
-                children: [
-                  // Profile picture
-                  Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      Icons.person,
-                      color: AppColors.primary,
-                      size: 30,
-                    ),
+      child: InkWell(
+        onTap: surgery != null && surgery!['id'] != null
+            ? () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        SurgeryDetailsPage(surgeryId: surgery!['id'] as int),
                   ),
-                  const SizedBox(width: 16),
-                  // Details
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
+                );
+              }
+            : null,
+        borderRadius: BorderRadius.circular(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Profile picture
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.person, color: AppColors.primary, size: 30),
+            ),
+            const SizedBox(width: 16),
+            // Middle column: Name, Surgery, Date/Time
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // First row: Name and Status button aligned
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
                           name,
                           style: const TextStyle(
                             fontSize: 16,
@@ -672,125 +720,117 @@ class _SurgeryCard extends StatelessWidget {
                             color: AppColors.primary,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          procedure,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Color(0xFF333333),
+                      ),
+                      const SizedBox(width: 8),
+                      // Status button/label aligned with name
+                      if (isUnassigned && onAssign != null)
+                        ElevatedButton(
+                          onPressed: onAssign,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: const Text(
+                            'Assign',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                      else if (!isUnassigned &&
+                          surgery != null &&
+                          isTodaysSurgery &&
+                          onStatusChange != null)
+                        ElevatedButton(
+                          onPressed: () => _showStatusDialog(context),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
+                            ),
+                            minimumSize: const Size(8, 28),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: Text(
+                            _formatStatusText(status ?? 'Status'),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                      else if (!isUnassigned &&
+                          surgery != null &&
+                          !isTodaysSurgery &&
+                          status != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            _formatStatusText(status ?? ''),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.access_time_filled,
-                              size: 16,
-                              color: AppColors.primary,
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                date,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey.shade700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  // Surgery Name
+                  Text(
+                    procedure,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF333333),
                     ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Date and Time
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.access_time_filled,
+                        size: 16,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          date,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
-          ),
-          // Action buttons positioned at top right (not clickable for navigation)
-          Positioned(
-            top: 0,
-            right: 0,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                // Assign button for unassigned surgeries
-                if (isUnassigned && onAssign != null)
-                  ElevatedButton(
-                    onPressed: onAssign,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Text(
-                      'Assign',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                // Status button for today's surgeries (clickable)
-                if (!isUnassigned &&
-                    surgery != null &&
-                    isTodaysSurgery &&
-                    onStatusChange != null)
-                  ElevatedButton(
-                    onPressed: () => _showStatusDialog(context),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: Text(
-                      _formatStatusText(status ?? 'Status'),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                // Status label for upcoming/finished surgeries (non-clickable)
-                if (!isUnassigned &&
-                    surgery != null &&
-                    !isTodaysSurgery &&
-                    status != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      _formatStatusText(status ?? ''),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

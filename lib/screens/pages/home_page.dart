@@ -16,7 +16,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Set<String> _selectedFilters =
       {}; // Empty = All, can select: 'New', 'Follow-Up', 'Finished'
   Set<String> _selectedUpcomingFilters =
@@ -31,26 +31,40 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     print('🏠 HomePage initState called');
     _loadAppointments(isInitialLoad: true);
-    // Auto-refresh appointments every 30 seconds (background refresh, no loading indicator)
-    _refreshTimer = Timer.periodic(const Duration(seconds: 120), (timer) {
-      print('⏰ Auto-refresh timer triggered (background)');
-      if (mounted) {
-        _loadAppointments(
-          isInitialLoad: false,
-        ); // Background refresh, no loading indicator
-      } else {
-        print('⚠️ Widget not mounted, skipping refresh');
+    // Auto-refresh appointments every 40 seconds (only when screen is active)
+    _refreshTimer = Timer.periodic(const Duration(seconds: 40), (timer) {
+      if (mounted && _isRouteActive()) {
+        print('⏰ HomePage: Auto-refresh timer triggered');
+        _loadAppointments(isInitialLoad: false);
       }
     });
-    print('✅ Timer started (30 seconds interval)');
+    print('✅ Timer started (40 seconds interval)');
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _refreshTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Refresh when app comes to foreground and this route is active
+    if (state == AppLifecycleState.resumed && mounted && _isRouteActive()) {
+      print('🔄 HomePage: App resumed, refreshing data');
+      _loadAppointments(isInitialLoad: false);
+    }
+  }
+
+  // Check if this route is currently active/visible
+  bool _isRouteActive() {
+    final route = ModalRoute.of(context);
+    return route?.isCurrent ?? false;
   }
 
   Future<void> _loadAppointments({bool isInitialLoad = false}) async {
@@ -143,8 +157,15 @@ class _HomePageState extends State<HomePage> {
 
           if (bookingTime != null && bookingTime.isNotEmpty) {
             try {
+              // Parse the date string - handle timezone issues
               dateTime = DateTime.parse(bookingTime);
-              print('   - Parsed dateTime: $dateTime');
+              // Convert to local timezone for display
+              dateTime = dateTime.toLocal();
+              print('   - Parsed dateTime (UTC): ${DateTime.parse(bookingTime)}');
+              print('   - Parsed dateTime (Local): $dateTime');
+              print('   - Current device time: ${DateTime.now()}');
+              print('   - Device timezone offset: ${DateTime.now().timeZoneOffset}');
+              
               // Format time as HH:MM AM/PM
               final hour = dateTime.hour;
               final minute = dateTime.minute;
@@ -154,15 +175,20 @@ class _HomePageState extends State<HomePage> {
                   : (hour == 0 ? 12 : hour);
               timeStr =
                   '${displayHour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} $period';
-              // Format date
+              // Format date - use local date
               dateStr = '${dateTime.day}/${dateTime.month}/${dateTime.year}';
               print('   - Formatted date: $dateStr');
               print('   - Formatted time: $timeStr');
             } catch (e) {
-              print('   ❌ Error parsing booking_time: $e');
+              print('   ❌ Error parsing booking_time "$bookingTime": $e');
+              print('   ❌ Stack trace: ${StackTrace.current}');
+              // Set a fallback date to prevent empty date strings
+              dateStr = '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}';
             }
           } else {
             print('   ⚠️ booking_time is null or empty');
+            // Set a fallback date to prevent empty date strings
+            dateStr = '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}';
           }
 
           // Map appointment_type to type
@@ -199,6 +225,13 @@ class _HomePageState extends State<HomePage> {
           );
           print('   - Mapped type: $type');
 
+          // Ensure dateStr is never empty - use current date as fallback
+          if (dateStr.isEmpty) {
+            final now = DateTime.now();
+            dateStr = '${now.day}/${now.month}/${now.year}';
+            print('   ⚠️ Using fallback date: $dateStr');
+          }
+
           final appointment = {
             'name': booking['patient_name'] ?? 'Unknown',
             'id': '#${booking['patient_id'] ?? booking['id'] ?? ''}',
@@ -210,6 +243,7 @@ class _HomePageState extends State<HomePage> {
             'booking_id': booking['id'],
             'patient_id': booking['patient_id'],
             'issues': booking['issues'] ?? '',
+            'original_booking_time': bookingTime, // Keep original for debugging
           };
 
           print('   ✅ Created appointment: $appointment\n');
@@ -357,9 +391,24 @@ class _HomePageState extends State<HomePage> {
     final today = DateTime.now();
     final todayStr = '${today.day}/${today.month}/${today.year}';
 
+    print('🔍 Filtering appointments for today: $todayStr');
+    print('📋 Total appointments: ${_appointments.length}');
+    
+    // Debug: Print all appointment dates
+    for (var apt in _appointments) {
+      print('   - Appointment date: "${apt['date']}" (type: ${apt['date'].runtimeType})');
+    }
+
     var filtered = _appointments.where((appointment) {
-      return appointment['date'] == todayStr;
+      final aptDate = appointment['date'] as String? ?? '';
+      final matches = aptDate == todayStr;
+      if (!matches && aptDate.isNotEmpty) {
+        print('   ⚠️ Appointment date "$aptDate" does not match today "$todayStr"');
+      }
+      return matches;
     }).toList();
+
+    print('✅ Filtered to ${filtered.length} appointments for today');
 
     // Apply status filters if any are selected
     if (_selectedFilters.isNotEmpty) {
