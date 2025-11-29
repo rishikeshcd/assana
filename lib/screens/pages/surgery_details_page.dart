@@ -19,6 +19,7 @@ class _SurgeryDetailsPageState extends State<SurgeryDetailsPage>
   Map<String, dynamic>? _surgeryData;
   Map<String, dynamic>? _appointmentData;
   Map<String, dynamic>? _prescriptionData;
+  Map<String, dynamic>? _patientData;
   String? _errorMessage;
   Timer? _refreshTimer;
   bool _isRefreshing = false;
@@ -88,6 +89,7 @@ class _SurgeryDetailsPageState extends State<SurgeryDetailsPage>
           _surgeryData = result['surgery'] as Map<String, dynamic>?;
           _appointmentData = result['appointment'] as Map<String, dynamic>?;
           _prescriptionData = result['prescription'] as Map<String, dynamic>?;
+          _patientData = result['patient'] as Map<String, dynamic>?;
           if (isInitialLoad) {
             _isLoading = false;
           }
@@ -161,6 +163,48 @@ class _SurgeryDetailsPageState extends State<SurgeryDetailsPage>
     }
 
     // If no date, don't allow status change (unassigned surgery)
+    return false;
+  }
+
+  bool _canReschedule() {
+    if (_surgeryData == null) return false;
+
+    final status = (_surgeryData!['status'] as String? ?? '').toUpperCase();
+
+    // Don't allow reschedule if status is ONGOING, FINISHED, or CANCELLED
+    if (status == 'ONGOING' || status == 'FINISHED' || status == 'CANCELLED') {
+      return false;
+    }
+
+    // Don't allow reschedule for unassigned surgeries (NOT_SHEDULED, NOT_SCHEDULED, or no date)
+    if (status == 'NOT_SHEDULED' || status == 'NOT_SCHEDULED') {
+      return false;
+    }
+
+    // Check if surgery date is today or in the future
+    final surgeryDateStr = _surgeryData!['surgery_date'] as String?;
+    if (surgeryDateStr != null && surgeryDateStr.isNotEmpty) {
+      try {
+        final surgeryDate = DateTime.parse(surgeryDateStr);
+        final today = DateTime.now();
+        final todayStart = DateTime(today.year, today.month, today.day);
+        final surgeryDateStart = DateTime(
+          surgeryDate.year,
+          surgeryDate.month,
+          surgeryDate.day,
+        );
+
+        // Allow reschedule if surgery date is today or in the future
+        return surgeryDateStart.isAfter(todayStart) ||
+            surgeryDateStart.isAtSameMomentAs(todayStart);
+      } catch (e) {
+        print('Error parsing surgery date: $e');
+        // If date parsing fails, don't allow reschedule (might be unassigned)
+        return false;
+      }
+    }
+
+    // If no date, don't allow reschedule (unassigned surgery)
     return false;
   }
 
@@ -240,6 +284,21 @@ class _SurgeryDetailsPageState extends State<SurgeryDetailsPage>
     }
   }
 
+  String _buildEmergencyContactContent() {
+    final name = _patientData?['emergency_contact_name'] as String?;
+    final phone = _patientData?['emergency_contact_phone'] as String?;
+    
+    final List<String> parts = [];
+    if (name != null && name.isNotEmpty) {
+      parts.add('Name: $name');
+    }
+    if (phone != null && phone.isNotEmpty) {
+      parts.add('Phone: $phone');
+    }
+    
+    return parts.isEmpty ? 'Not available' : parts.join('\n');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -283,6 +342,29 @@ class _SurgeryDetailsPageState extends State<SurgeryDetailsPage>
                         title: 'Patient Name',
                         content: _appointmentData!['patient_name'] as String,
                         icon: Icons.person,
+                      ),
+                    const SizedBox(height: 16),
+
+                    // Phone Number
+                    if (_patientData?['phone_number'] != null)
+                      _DetailCard(
+                        title: 'Phone Number',
+                        content: _patientData!['phone_number'] as String,
+                        icon: Icons.phone,
+                      ),
+                    const SizedBox(height: 16),
+
+                    // Emergency Contact
+                    if ((_patientData?['emergency_contact_name'] != null &&
+                            (_patientData!['emergency_contact_name'] as String)
+                                .isNotEmpty) ||
+                        (_patientData?['emergency_contact_phone'] != null &&
+                            (_patientData!['emergency_contact_phone'] as String)
+                                .isNotEmpty))
+                      _DetailCard(
+                        title: 'Emergency Contact',
+                        content: _buildEmergencyContactContent(),
+                        icon: Icons.emergency,
                       ),
                     const SizedBox(height: 16),
 
@@ -353,8 +435,8 @@ class _SurgeryDetailsPageState extends State<SurgeryDetailsPage>
                             ),
                     const SizedBox(height: 16),
 
-                    // Reschedule Button (only for today's/upcoming surgeries)
-                    if (_canChangeStatus() && _surgeryData != null)
+                    // Reschedule Button (only for today's/upcoming surgeries, not ONGOING)
+                    if (_canReschedule() && _surgeryData != null)
                       ElevatedButton.icon(
                         onPressed: () => _showRescheduleDialog(),
                         icon: const Icon(Icons.schedule),
@@ -371,7 +453,7 @@ class _SurgeryDetailsPageState extends State<SurgeryDetailsPage>
                           ),
                         ),
                       ),
-                    if (_canChangeStatus() && _surgeryData != null)
+                    if (_canReschedule() && _surgeryData != null)
                       const SizedBox(height: 16),
 
                     // Medical Report Link

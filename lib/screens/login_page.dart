@@ -302,16 +302,16 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           ],
                         ),
-                        TextButton(
-                          onPressed: () {},
-                          child: Text(
-                            'Forgot Password',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: AppColors.primary,
-                            ),
-                          ),
-                        ),
+                        // TextButton(
+                        //   onPressed: () {},
+                        //   child: Text(
+                        //     'Forgot Password',
+                        //     style: TextStyle(
+                        //       fontSize: 14,
+                        //       color: AppColors.primary,
+                        //     ),
+                        //   ),
+                        // ),
                       ],
                     ),
                     const SizedBox(height: 32),

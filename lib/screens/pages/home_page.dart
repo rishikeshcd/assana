@@ -17,24 +17,28 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+  int _selectedTab = 0; // 0 = All, 1 = Today, 2 = Upcoming
   Set<String> _selectedFilters =
       {}; // Empty = All, can select: 'New', 'Follow-Up', 'Finished'
   Set<String> _selectedStatusFilters = {
     'PENDING',
   }; // Default: Only PENDING, can select: 'COMPLETED', 'PENDING', 'SURGERY_RECOMMENDED'
-  bool _showTodayOnly = false; // Filter to show only today's appointments
+  Set<String> _selectedAppointmentModeFilters =
+      {}; // Empty = All, can select: 'PHYSICAL', 'ONLINE'
 
   List<Map<String, dynamic>> _appointments = [];
   bool _isLoading = true;
   bool _isInitialLoad = true; // Track if this is the first load
   Timer? _refreshTimer;
   bool _isRefreshing = false; // Prevent multiple simultaneous refreshes
+  String? _designation;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     print('🏠 HomePage initState called');
+    _loadDesignation();
     _loadAppointments(isInitialLoad: true);
     // Auto-refresh appointments every 40 seconds (only when screen is active)
     _refreshTimer = Timer.periodic(const Duration(seconds: 40), (timer) {
@@ -44,6 +48,41 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       }
     });
     print('✅ Timer started (40 seconds interval)');
+  }
+
+  Future<void> _loadDesignation() async {
+    try {
+      // First try to get from local storage
+      var profile = await ProfileManager.instance.getProfile();
+
+      // If designation is not in local storage, fetch from API
+      if (profile.designation == null || profile.designation!.isEmpty) {
+        final userId = profile.userId;
+        if (userId != null) {
+          try {
+            final response = await ApiMethods.getProfileData(userId);
+            if (response.data['status'] == true &&
+                response.data['result'] != null) {
+              final result = response.data['result'] as Map<String, dynamic>;
+              // Save profile data to local storage
+              await ProfileManager.instance.saveProfileFromAPI(result);
+              // Reload profile
+              profile = await ProfileManager.instance.getProfile();
+            }
+          } catch (e) {
+            print('Error fetching profile from API: $e');
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _designation = profile.designation;
+        });
+      }
+    } catch (e) {
+      print('Error loading designation: $e');
+    }
   }
 
   @override
@@ -398,16 +437,44 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // Start with all appointments
     var filtered = List<Map<String, dynamic>>.from(_appointments);
 
-    // Apply "Today" filter if enabled
-    if (_showTodayOnly) {
-      final today = DateTime.now();
-      final todayStr = '${today.day}/${today.month}/${today.year}';
+    // Apply tab filter (All, Today, or Upcoming)
+    final today = DateTime.now();
+    final todayStr = '${today.day}/${today.month}/${today.year}';
 
+    if (_selectedTab == 1) {
+      // Today tab - show only today's appointments
       filtered = filtered.where((appointment) {
         final aptDate = appointment['date'] as String? ?? '';
         return aptDate == todayStr;
       }).toList();
+    } else if (_selectedTab == 2) {
+      // Upcoming tab - show only future appointments
+      filtered = filtered.where((appointment) {
+        final aptDate = appointment['date'] as String? ?? '';
+        if (aptDate.isEmpty) return false;
+        try {
+          final parts = aptDate.split('/');
+          if (parts.length == 3) {
+            final aptDateTime = DateTime(
+              int.parse(parts[2]),
+              int.parse(parts[1]),
+              int.parse(parts[0]),
+            );
+            final todayStart = DateTime(today.year, today.month, today.day);
+            final aptDateStart = DateTime(
+              aptDateTime.year,
+              aptDateTime.month,
+              aptDateTime.day,
+            );
+            return aptDateStart.isAfter(todayStart);
+          }
+        } catch (e) {
+          return false;
+        }
+        return false;
+      }).toList();
     }
+    // _selectedTab == 0 (All) - no date filtering
 
     // Apply appointment type filters if any are selected
     if (_selectedFilters.isNotEmpty) {
@@ -424,20 +491,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       }).toList();
     }
 
-    // Sort appointments: today's first, then by date
-    final today = DateTime.now();
-    final todayStr = '${today.day}/${today.month}/${today.year}';
+    // Apply appointment mode filters (PHYSICAL, ONLINE) - all are PHYSICAL for now
+    if (_selectedAppointmentModeFilters.isNotEmpty) {
+      filtered = filtered.where((appointment) {
+        // Currently all appointments are considered PHYSICAL
+        // If PHYSICAL is selected, show all (since all are physical)
+        // If ONLINE is selected, show none (since none are online yet)
+        if (_selectedAppointmentModeFilters.contains('PHYSICAL')) {
+          return true; // All appointments are physical
+        }
+        return false; // No online appointments yet
+      }).toList();
+    }
 
+    // Sort appointments by date
     filtered.sort((a, b) {
       final aDate = a['date'] as String? ?? '';
       final bDate = b['date'] as String? ?? '';
-
-      // Today's appointments come first
-      final aIsToday = aDate == todayStr;
-      final bIsToday = bDate == todayStr;
-
-      if (aIsToday && !bIsToday) return -1;
-      if (!aIsToday && bIsToday) return 1;
 
       // If both are today or both are not today, sort by date
       if (aDate.isNotEmpty && bDate.isNotEmpty) {
@@ -548,6 +618,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void _clearAllFilters() {
     setState(() {
       _selectedFilters.clear();
+      _selectedStatusFilters.clear();
+      _selectedAppointmentModeFilters.clear();
     });
   }
 
@@ -555,7 +627,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // Create a local copy of selected filters for the bottom sheet
     Set<String> tempFilters = Set<String>.from(_selectedFilters);
     Set<String> tempStatusFilters = Set<String>.from(_selectedStatusFilters);
-    bool tempShowTodayOnly = _showTodayOnly;
+    Set<String> tempAppointmentModeFilters = Set<String>.from(
+      _selectedAppointmentModeFilters,
+    );
 
     showModalBottomSheet(
       context: context,
@@ -581,9 +655,50 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                const Text(
-                  'Filter Appointments',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                Padding(
+                  padding: const EdgeInsets.only(left: 0, right: 20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(left: 20),
+                        child: Text(
+                          'Filter Appointments',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      // Clear filters button in drawer
+                      if (tempFilters.isNotEmpty ||
+                          tempStatusFilters.isNotEmpty ||
+                          tempAppointmentModeFilters.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: () {
+                            setModalState(() {
+                              tempFilters.clear();
+                              tempStatusFilters.clear();
+                              tempAppointmentModeFilters.clear();
+                            });
+                          },
+                          icon: const Icon(Icons.clear, size: 16),
+                          label: const Text(
+                            'Clear',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 10),
                 // Scrollable content
@@ -593,26 +708,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Today filter option
-                        ListTile(
-                          leading: Icon(
-                            Icons.today,
-                            color: tempShowTodayOnly
-                                ? AppColors.primary
-                                : Colors.grey,
-                          ),
-                          title: const Text('Today Only'),
-                          trailing: Checkbox(
-                            value: tempShowTodayOnly,
-                            onChanged: (value) {
-                              setModalState(() {
-                                tempShowTodayOnly = value ?? false;
-                              });
-                            },
-                            activeColor: AppColors.primary,
-                          ),
-                        ),
-                        const Divider(),
+                        // Filter by Appointment Mode (First)
                         const Padding(
                           padding: EdgeInsets.symmetric(
                             horizontal: 16,
@@ -621,7 +717,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           child: Align(
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              'Filter by Appointment Type',
+                              'Appointment Mode',
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
@@ -630,64 +726,69 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             ),
                           ),
                         ),
-                        // All option for appointment type
+                        // All option for appointment mode
                         ListTile(
                           leading: Icon(
                             Icons.list,
-                            color: tempFilters.isEmpty
+                            color: tempAppointmentModeFilters.isEmpty
                                 ? AppColors.primary
                                 : Colors.grey,
                           ),
                           title: const Text('All'),
-                          trailing: tempFilters.isEmpty
+                          trailing: tempAppointmentModeFilters.isEmpty
                               ? Icon(Icons.check, color: AppColors.primary)
                               : null,
                           onTap: () {
                             setModalState(() {
-                              tempFilters.clear();
+                              tempAppointmentModeFilters.clear();
                             });
                           },
                         ),
-                        // New option
+                        // Physical option
                         ListTile(
                           leading: Icon(
-                            Icons.fiber_new,
-                            color: tempFilters.contains('New')
+                            Icons.location_on,
+                            color:
+                                tempAppointmentModeFilters.contains('PHYSICAL')
                                 ? AppColors.primary
                                 : Colors.grey,
                           ),
-                          title: const Text('New'),
+                          title: const Text('Physical'),
                           trailing: Checkbox(
-                            value: tempFilters.contains('New'),
+                            value: tempAppointmentModeFilters.contains(
+                              'PHYSICAL',
+                            ),
                             onChanged: (value) {
                               setModalState(() {
                                 if (value == true) {
-                                  tempFilters.add('New');
+                                  tempAppointmentModeFilters.add('PHYSICAL');
                                 } else {
-                                  tempFilters.remove('New');
+                                  tempAppointmentModeFilters.remove('PHYSICAL');
                                 }
                               });
                             },
                             activeColor: AppColors.primary,
                           ),
                         ),
-                        // Follow-Up option
+                        // Online option
                         ListTile(
                           leading: Icon(
-                            Icons.update,
-                            color: tempFilters.contains('Follow-Up')
+                            Icons.video_call,
+                            color: tempAppointmentModeFilters.contains('ONLINE')
                                 ? AppColors.primary
                                 : Colors.grey,
                           ),
-                          title: const Text('Follow-Up'),
+                          title: const Text('Online'),
                           trailing: Checkbox(
-                            value: tempFilters.contains('Follow-Up'),
+                            value: tempAppointmentModeFilters.contains(
+                              'ONLINE',
+                            ),
                             onChanged: (value) {
                               setModalState(() {
                                 if (value == true) {
-                                  tempFilters.add('Follow-Up');
+                                  tempAppointmentModeFilters.add('ONLINE');
                                 } else {
-                                  tempFilters.remove('Follow-Up');
+                                  tempAppointmentModeFilters.remove('ONLINE');
                                 }
                               });
                             },
@@ -695,6 +796,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           ),
                         ),
                         const Divider(),
+                        // Filter by Status (Second)
                         const Padding(
                           padding: EdgeInsets.symmetric(
                             horizontal: 16,
@@ -703,7 +805,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           child: Align(
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              'Filter by Status',
+                              'Status',
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
@@ -711,6 +813,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               ),
                             ),
                           ),
+                        ),
+                        // All option for status
+                        ListTile(
+                          leading: Icon(
+                            Icons.list,
+                            color: tempStatusFilters.isEmpty
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('All'),
+                          trailing: tempStatusFilters.isEmpty
+                              ? Icon(Icons.check, color: AppColors.primary)
+                              : null,
+                          onTap: () {
+                            setModalState(() {
+                              tempStatusFilters.clear();
+                            });
+                          },
                         ),
                         // PENDING option
                         ListTile(
@@ -788,6 +908,89 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             activeColor: AppColors.primary,
                           ),
                         ),
+                        const Divider(),
+                        // Filter by Appointment Type (Last)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Appointment Type',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // All option for appointment type
+                        ListTile(
+                          leading: Icon(
+                            Icons.list,
+                            color: tempFilters.isEmpty
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('All'),
+                          trailing: tempFilters.isEmpty
+                              ? Icon(Icons.check, color: AppColors.primary)
+                              : null,
+                          onTap: () {
+                            setModalState(() {
+                              tempFilters.clear();
+                            });
+                          },
+                        ),
+                        // New option
+                        ListTile(
+                          leading: Icon(
+                            Icons.fiber_new,
+                            color: tempFilters.contains('New')
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('New'),
+                          trailing: Checkbox(
+                            value: tempFilters.contains('New'),
+                            onChanged: (value) {
+                              setModalState(() {
+                                if (value == true) {
+                                  tempFilters.add('New');
+                                } else {
+                                  tempFilters.remove('New');
+                                }
+                              });
+                            },
+                            activeColor: AppColors.primary,
+                          ),
+                        ),
+                        // Follow-Up option
+                        ListTile(
+                          leading: Icon(
+                            Icons.update,
+                            color: tempFilters.contains('Follow-Up')
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('Follow-Up'),
+                          trailing: Checkbox(
+                            value: tempFilters.contains('Follow-Up'),
+                            onChanged: (value) {
+                              setModalState(() {
+                                if (value == true) {
+                                  tempFilters.add('Follow-Up');
+                                } else {
+                                  tempFilters.remove('Follow-Up');
+                                }
+                              });
+                            },
+                            activeColor: AppColors.primary,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -804,7 +1007,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           _selectedStatusFilters = Set<String>.from(
                             tempStatusFilters,
                           );
-                          _showTodayOnly = tempShowTodayOnly;
+                          _selectedAppointmentModeFilters = Set<String>.from(
+                            tempAppointmentModeFilters,
+                          );
                         });
                         Navigator.pop(context);
                       },
@@ -875,7 +1080,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Dr ${widget.userName.split(' ').map((word) => word[0].toUpperCase() + word.substring(1)).join(' ')}',
+                            '${widget.userName.split(' ').map((word) => word[0].toUpperCase() + word.substring(1)).join(' ')}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 24,
@@ -884,6 +1089,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
+                          if (_designation != null &&
+                              _designation!.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              _designation!,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -976,149 +1195,160 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             color: Color(0xFF333333),
                           ),
                         ),
-                        IconButton(
-                          icon: Icon(
-                            Icons.filter_list,
-                            color:
-                                (_selectedFilters.isNotEmpty ||
-                                    _selectedStatusFilters.isNotEmpty ||
-                                    _showTodayOnly)
-                                ? AppColors.primary
-                                : Colors.grey,
-                          ),
-                          onPressed: _showFilterMenu,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Clear filters button
+                            if (_selectedFilters.isNotEmpty ||
+                                _selectedStatusFilters.isNotEmpty ||
+                                _selectedAppointmentModeFilters.isNotEmpty)
+                              TextButton.icon(
+                                onPressed: _clearAllFilters,
+                                icon: const Icon(Icons.clear, size: 16),
+                                label: const Text(
+                                  'Clear',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: AppColors.primary,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                              ),
+                            IconButton(
+                              icon: Icon(
+                                Icons.filter_list,
+                                color:
+                                    (_selectedFilters.isNotEmpty ||
+                                        _selectedStatusFilters.isNotEmpty ||
+                                        _selectedAppointmentModeFilters
+                                            .isNotEmpty)
+                                    ? AppColors.primary
+                                    : Colors.grey,
+                              ),
+                              onPressed: _showFilterMenu,
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    // Filter chips
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          // Today filter chip
-                          FilterChip(
-                            label: const Text('Today'),
-                            selected: _showTodayOnly,
-                            onSelected: (selected) {
+                    const SizedBox(height: 16),
+                    // Tabs for All, Today, and Upcoming
+                    Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
                               setState(() {
-                                _showTodayOnly = selected;
+                                _selectedTab = 0;
                               });
                             },
-                            selectedColor: AppColors.primary.withValues(
-                              alpha: 0.2,
-                            ),
-                            checkmarkColor: AppColors.primary,
-                            labelStyle: TextStyle(
-                              color: _showTodayOnly
-                                  ? AppColors.primary
-                                  : Colors.grey.shade700,
-                              fontWeight: _showTodayOnly
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: _selectedTab == 0
+                                    ? AppColors.primary
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: _selectedTab == 0
+                                      ? AppColors.primary
+                                      : Colors.grey.shade300,
+                                  width: 1,
+                                ),
+                              ),
+                              child: Text(
+                                'All',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: _selectedTab == 0
+                                      ? Colors.white
+                                      : Colors.grey.shade700,
+                                ),
+                              ),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          // Appointment Type filter chips
-                          if (_selectedFilters.isEmpty)
-                            FilterChip(
-                              label: const Text('All Types'),
-                              selected: true,
-                              onSelected: null,
-                              selectedColor: AppColors.primary.withValues(
-                                alpha: 0.2,
-                              ),
-                              checkmarkColor: AppColors.primary,
-                              labelStyle: const TextStyle(
-                                color: AppColors.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            )
-                          else
-                            ...['New', 'Follow-Up', 'Finished']
-                                .where(
-                                  (status) => _selectedFilters.contains(status),
-                                )
-                                .map(
-                                  (status) => Padding(
-                                    padding: const EdgeInsets.only(right: 8),
-                                    child: FilterChip(
-                                      label: Text(status),
-                                      selected: true,
-                                      onSelected: (selected) {
-                                        setState(() {
-                                          if (!selected) {
-                                            _selectedFilters.remove(status);
-                                          }
-                                        });
-                                      },
-                                      selectedColor: AppColors.primary
-                                          .withValues(alpha: 0.2),
-                                      checkmarkColor: AppColors.primary,
-                                      deleteIcon: const Icon(
-                                        Icons.close,
-                                        size: 18,
-                                      ),
-                                      onDeleted: () {
-                                        setState(() {
-                                          _selectedFilters.remove(status);
-                                        });
-                                      },
-                                      labelStyle: const TextStyle(
-                                        color: AppColors.primary,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                          const SizedBox(width: 8),
-                          // Status filter chips (COMPLETED, PENDING, SURGERY_RECOMMENDED)
-                          ...['PENDING', 'COMPLETED', 'SURGERY_RECOMMENDED']
-                              .where(
-                                (status) =>
-                                    _selectedStatusFilters.contains(status),
-                              )
-                              .map(
-                                (status) => Padding(
-                                  padding: const EdgeInsets.only(right: 8),
-                                  child: FilterChip(
-                                    label: Text(
-                                      status == 'SURGERY_RECOMMENDED'
-                                          ? 'Surgery'
-                                          : status == 'PENDING'
-                                          ? 'Pending'
-                                          : 'Completed',
-                                    ),
-                                    selected: true,
-                                    onSelected: (selected) {
-                                      setState(() {
-                                        if (!selected) {
-                                          _selectedStatusFilters.remove(status);
-                                        }
-                                      });
-                                    },
-                                    selectedColor: AppColors.primary.withValues(
-                                      alpha: 0.2,
-                                    ),
-                                    checkmarkColor: AppColors.primary,
-                                    deleteIcon: const Icon(
-                                      Icons.close,
-                                      size: 18,
-                                    ),
-                                    onDeleted: () {
-                                      setState(() {
-                                        _selectedStatusFilters.remove(status);
-                                      });
-                                    },
-                                    labelStyle: const TextStyle(
-                                      color: AppColors.primary,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedTab = 1;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: _selectedTab == 1
+                                    ? AppColors.primary
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: _selectedTab == 1
+                                      ? AppColors.primary
+                                      : Colors.grey.shade300,
+                                  width: 1,
                                 ),
                               ),
-                        ],
-                      ),
+                              child: Text(
+                                'Today',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: _selectedTab == 1
+                                      ? Colors.white
+                                      : Colors.grey.shade700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedTab = 2;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: _selectedTab == 2
+                                    ? AppColors.primary
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: _selectedTab == 2
+                                      ? AppColors.primary
+                                      : Colors.grey.shade300,
+                                  width: 1,
+                                ),
+                              ),
+                              child: Text(
+                                'Upcoming',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: _selectedTab == 2
+                                      ? Colors.white
+                                      : Colors.grey.shade700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 16),
                     // Loading indicator or Appointment cards
@@ -1217,8 +1447,42 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                               color: Colors.grey.shade600,
                                             ),
                                           ),
+                                          // Issues row (below ID)
+                                          if (appointment['issues'] != null &&
+                                              (appointment['issues'] as String)
+                                                  .isNotEmpty) ...[
+                                            const SizedBox(height: 4),
+                                            Row(
+                                              children: [
+                                                SvgPicture.asset(
+                                                  'assets/images/stethoscope.svg',
+                                                  width: 14,
+                                                  height: 14,
+                                                  colorFilter: ColorFilter.mode(
+                                                    AppColors.primary,
+                                                    BlendMode.srcIn,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Expanded(
+                                                  child: Text(
+                                                    appointment['issues']
+                                                        as String,
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color:
+                                                          Colors.grey.shade700,
+                                                    ),
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
                                           const SizedBox(height: 8),
-                                          // Date, Time and Issues in same row
+                                          // Date and Time in same row
                                           Row(
                                             children: [
                                               // Date
@@ -1255,37 +1519,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                                   color: Colors.grey.shade700,
                                                 ),
                                               ),
-                                              if (appointment['issues'] !=
-                                                      null &&
-                                                  (appointment['issues']
-                                                          as String)
-                                                      .isNotEmpty) ...[
-                                                const SizedBox(width: 16),
-                                                SvgPicture.asset(
-                                                  'assets/images/stethoscope.svg',
-                                                  width: 16,
-                                                  height: 16,
-                                                  colorFilter: ColorFilter.mode(
-                                                    AppColors.primary,
-                                                    BlendMode.srcIn,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Expanded(
-                                                  child: Text(
-                                                    appointment['issues']
-                                                        as String,
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color:
-                                                          Colors.grey.shade700,
-                                                    ),
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                  ),
-                                                ),
-                                              ],
                                             ],
                                           ),
                                         ],

@@ -63,7 +63,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage>
   Future<void> _loadBookingDetails({bool isInitialLoad = false}) async {
     // Prevent multiple simultaneous API calls
     if (_isRefreshing && !isInitialLoad) {
-      print('⏸️ AppointmentDetailsPage: Refresh already in progress, skipping...');
+      print(
+        '⏸️ AppointmentDetailsPage: Refresh already in progress, skipping...',
+      );
       return;
     }
 
@@ -233,6 +235,22 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage>
                       ),
                     const SizedBox(height: 16),
 
+                    // Phone Number
+                    if (_bookingData?['whatsapp_number'] != null ||
+                        _patientData?['whatsapp_number'] != null)
+                      _DetailCard(
+                        title: 'Phone Number',
+                        content:
+                            (_bookingData?['whatsapp_number'] ??
+                                    _patientData?['whatsapp_number'] ??
+                                    'N/A')
+                                as String,
+                        icon: Icons.phone,
+                      ),
+                    if (_bookingData?['whatsapp_number'] != null ||
+                        _patientData?['whatsapp_number'] != null)
+                      const SizedBox(height: 16),
+
                     // Appointment Type
                     if (_bookingData?['appointment_type'] != null)
                       _DetailCard(
@@ -241,6 +259,22 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage>
                         icon: Icons.event,
                       ),
                     const SizedBox(height: 16),
+
+                    // Status
+                    if (_bookingData?['api_status'] != null ||
+                        _bookingData?['status'] != null)
+                      _DetailCard(
+                        title: 'Status',
+                        content:
+                            (_bookingData?['api_status'] ??
+                                    _bookingData?['status'] ??
+                                    'N/A')
+                                as String,
+                        icon: Icons.flag,
+                      ),
+                    if (_bookingData?['api_status'] != null ||
+                        _bookingData?['status'] != null)
+                      const SizedBox(height: 16),
 
                     // Issue
                     if (_bookingData?['issues'] != null &&

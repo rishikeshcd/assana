@@ -594,16 +594,15 @@ class _EditProfilePageState extends State<EditProfilePage> {
                       value: _originalProfile!.email!,
                     ),
                   if (_originalProfile?.email != null)
-                    const SizedBox(height: 20),
-                  // Role Field (Read-only from login)
-                  // if (_originalProfile?.role != null)
-                  //   _buildReadOnlyField(
-                  //     label: 'Role',
-                  //     icon: Icons.badge_outlined,
-                  //     value: _originalProfile!.role!,
-                  //   ),
-                  if (_originalProfile?.role != null)
-                    const SizedBox(height: 20),
+                    // Role Field (Read-only from login)
+                    // if (_originalProfile?.role != null)
+                    //   _buildReadOnlyField(
+                    //     label: 'Role',
+                    //     icon: Icons.badge_outlined,
+                    //     value: _originalProfile!.role!,
+                    //   ),
+                    if (_originalProfile?.role != null)
+                      const SizedBox(height: 20),
 
                   // Form for validation
                   Form(
@@ -629,14 +628,14 @@ class _EditProfilePageState extends State<EditProfilePage> {
                         ),
                         const SizedBox(height: 20),
                         // Change Password Field
-                        _buildInputField(
-                          label: 'Change Password',
-                          icon: Icons.lock,
-                          controller: _passwordController,
-                          placeholder: 'Enter new password',
-                          isPassword: true,
-                          enabled: _isEditing,
-                        ),
+                        // _buildInputField(
+                        //   label: 'Change Password',
+                        //   icon: Icons.lock,
+                        //   controller: _passwordController,
+                        //   placeholder: 'Enter new password',
+                        //   isPassword: true,
+                        //   enabled: _isEditing,
+                        // ),
                       ],
                     ),
                   ),

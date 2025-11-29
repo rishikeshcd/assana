@@ -131,7 +131,7 @@ class _MainShellState extends State<MainShell> {
                 _buildNavItem(
                   svgPath: 'assets/images/surgery.svg',
                   svgPathFilled: 'assets/images/surgery-fill.svg',
-                  label: 'Surgeries',
+                  label: 'Procedures',
                   index: 1,
                 ),
                 _buildNavItem(

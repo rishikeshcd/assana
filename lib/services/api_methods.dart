@@ -140,14 +140,19 @@ class ApiMethods {
   }
 
   /// Change Password
-  /// POST /profile/change-password
+  /// PUT /v1/user/change-user-password
   static Future<Response> changePassword({
-    required String currentPassword,
+    required String email,
+    required String oldPassword,
     required String newPassword,
   }) async {
-    return await _api.post(
-      '/profile/change-password',
-      data: {'currentPassword': currentPassword, 'newPassword': newPassword},
+    return await _api.put(
+      '/v1/user/change-user-password',
+      data: {
+        'email': email,
+        'old_password': oldPassword,
+        'new_password': newPassword,
+      },
     );
   }
 
@@ -303,11 +308,7 @@ class ApiMethods {
   }) async {
     return await _api.post(
       '/v1/doctor/surgery/reschedule',
-      data: {
-        'surgery_id': surgeryId,
-        'new_date': newDate,
-        'reason': reason,
-      },
+      data: {'surgery_id': surgeryId, 'new_date': newDate, 'reason': reason},
     );
   }
 

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import '../../theme/app_colors.dart';
+import '../../services/api_methods.dart';
+import '../../services/profile_manager.dart';
 import 'edit_profile_page.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -14,6 +17,357 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   // bool _lightModeEnabled = true; // Commented out - theme functionality not available yet
   // bool _notificationsEnabled = true; // Commented out - notification functionality not available yet
+
+  void _showChangePasswordDialog(BuildContext context) {
+    final currentPasswordController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    bool isLoading = false;
+    bool showCurrentPassword = false;
+    bool showNewPassword = false;
+    bool showConfirmPassword = false;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              title: Text(
+                'Change Password',
+                style: TextStyle(
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              content: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Current Password
+                      TextFormField(
+                        controller: currentPasswordController,
+                        obscureText: !showCurrentPassword,
+                        decoration: InputDecoration(
+                          labelText: 'Current Password',
+                          hintText: 'Enter current password',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(
+                              color: AppColors.primary,
+                              width: 2,
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          filled: true,
+                          fillColor: AppColors.cardBackground,
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              showCurrentPassword
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                              color: Colors.grey.shade600,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                showCurrentPassword = !showCurrentPassword;
+                              });
+                            },
+                          ),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter current password';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      // New Password
+                      TextFormField(
+                        controller: newPasswordController,
+                        obscureText: !showNewPassword,
+                        decoration: InputDecoration(
+                          labelText: 'New Password',
+                          hintText: 'Enter new password',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(
+                              color: AppColors.primary,
+                              width: 2,
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          filled: true,
+                          fillColor: AppColors.cardBackground,
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              showNewPassword
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                              color: Colors.grey.shade600,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                showNewPassword = !showNewPassword;
+                              });
+                            },
+                          ),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter new password';
+                          }
+                          if (value.length < 6) {
+                            return 'Password must be at least 6 characters';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      // Confirm Password
+                      TextFormField(
+                        controller: confirmPasswordController,
+                        obscureText: !showConfirmPassword,
+                        decoration: InputDecoration(
+                          labelText: 'Confirm New Password',
+                          hintText: 'Confirm new password',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(
+                              color: AppColors.primary,
+                              width: 2,
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          filled: true,
+                          fillColor: AppColors.cardBackground,
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              showConfirmPassword
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                              color: Colors.grey.shade600,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                showConfirmPassword = !showConfirmPassword;
+                              });
+                            },
+                          ),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please confirm new password';
+                          }
+                          if (value != newPasswordController.text) {
+                            return 'Passwords do not match';
+                          }
+                          return null;
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isLoading
+                      ? null
+                      : () {
+                          Navigator.of(context).pop();
+                        },
+                  child: Text(
+                    'Cancel',
+                    style: TextStyle(color: Colors.grey.shade700),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: isLoading
+                      ? null
+                      : () async {
+                          if (formKey.currentState!.validate()) {
+                            setDialogState(() {
+                              isLoading = true;
+                            });
+
+                            try {
+                              // Get user email from profile
+                              final profile = await ProfileManager.instance
+                                  .getProfile();
+                              final userEmail = profile.email;
+
+                              if (userEmail == null || userEmail.isEmpty) {
+                                throw Exception(
+                                  'User email not found. Please login again.',
+                                );
+                              }
+
+                              final response = await ApiMethods.changePassword(
+                                email: userEmail,
+                                oldPassword: currentPasswordController.text,
+                                newPassword: newPasswordController.text,
+                              );
+
+                              if (response.statusCode == 200 &&
+                                  response.data['status'] == true) {
+                                if (context.mounted) {
+                                  Navigator.of(context).pop();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        response.data['message'] ??
+                                            'Password updated successfully',
+                                      ),
+                                      backgroundColor: Colors.green,
+                                    ),
+                                  );
+                                }
+                              } else {
+                                // Handle API error response
+                                final errorMessage =
+                                    response.data['message'] ??
+                                    response.data['error'] ??
+                                    'Failed to change password';
+                                throw Exception(errorMessage);
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                setDialogState(() {
+                                  isLoading = false;
+                                });
+
+                                String errorMessage =
+                                    'Failed to change password';
+                                if (e is DioException) {
+                                  // Handle Dio errors
+                                  if (e.response != null) {
+                                    final responseData = e.response!.data;
+                                    if (responseData is Map) {
+                                      errorMessage =
+                                          responseData['message'] ??
+                                          responseData['error'] ??
+                                          responseData['errors']?.toString() ??
+                                          'Request validation failed';
+                                    } else {
+                                      errorMessage = responseData.toString();
+                                    }
+                                  } else {
+                                    errorMessage =
+                                        e.message ?? 'Network error occurred';
+                                  }
+                                } else {
+                                  errorMessage = e.toString().replaceFirst(
+                                    'Exception: ',
+                                    '',
+                                  );
+                                }
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(errorMessage),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            }
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                      : const Text('Change Password'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showLogoutConfirmationDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          title: Text(
+            'Confirm Logout',
+            style: TextStyle(
+              color: AppColors.primary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          content: const Text(
+            'Are you sure you want to logout?',
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(
+                'Cancel',
+                style: TextStyle(color: Colors.grey.shade700),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await widget.onLogout();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text('Logout'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +392,7 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SizedBox(height: 10),
+                  SizedBox(height: 30),
                   const Text(
                     'Settings',
                     style: TextStyle(
@@ -130,11 +484,25 @@ class _SettingsPageState extends State<SettingsPage> {
                   // ),
                   const SizedBox(height: 12),
                   _SettingsItem(
+                    icon: Icons.lock,
+                    title: 'Change Password',
+                    subtitle: 'Update your password',
+                    trailing: Icon(
+                      Icons.arrow_forward_ios,
+                      color: AppColors.primary,
+                      size: 16,
+                    ),
+                    onTap: () {
+                      _showChangePasswordDialog(context);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _SettingsItem(
                     icon: Icons.logout,
                     title: 'Logout',
                     subtitle: 'Signed out of your account',
-                    onTap: () async {
-                      await widget.onLogout();
+                    onTap: () {
+                      _showLogoutConfirmationDialog(context);
                     },
                     textColor: AppColors.primary,
                     iconColor: AppColors.primary,
