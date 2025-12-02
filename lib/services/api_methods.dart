@@ -245,10 +245,13 @@ class ApiMethods {
   // ========== SURGERIES ==========
 
   /// Get Today and Upcoming Surgeries
-  /// GET /v1/doctor/surgery/today-upcoming
+  /// GET /v1/doctor/surgery/today-upcoming?upcoming_days=7
   /// Returns: { "today": [...], "upcoming": [] }
-  static Future<Response> getTodayUpcomingSurgeries() async {
-    return await _api.get('/v1/doctor/surgery/today-upcoming');
+  static Future<Response> getTodayUpcomingSurgeries({int upcomingDays = 7}) async {
+    return await _api.get(
+      '/v1/doctor/surgery/today-upcoming',
+      queryParams: {'upcoming_days': upcomingDays},
+    );
   }
 
   /// Get Unassigned Surgeries
@@ -309,6 +312,79 @@ class ApiMethods {
     return await _api.post(
       '/v1/doctor/surgery/reschedule',
       data: {'surgery_id': surgeryId, 'new_date': newDate, 'reason': reason},
+    );
+  }
+
+  // ========== PROCEDURES ==========
+
+  /// Get Today and Upcoming Procedures
+  /// GET /v1/doctor/patient-upcoming-procedures?upcoming_days=7
+  /// Returns: { "today": [...], "upcoming": [] }
+  static Future<Response> getTodayUpcomingProcedures({int upcomingDays = 7}) async {
+    return await _api.get(
+      '/v1/doctor/patient-upcoming-procedures',
+      queryParams: {'upcoming_days': upcomingDays},
+    );
+  }
+
+  /// Get Unscheduled Procedures
+  /// GET /v1/doctor/patient-procedures/unsheduled
+  /// Returns: [{ id, patient_id, patient_name, procedure_id, procedure_name, status, ... }]
+  static Future<Response> getUnscheduledProcedures() async {
+    return await _api.get('/v1/doctor/patient-procedures/unsheduled');
+  }
+
+  /// Get Finished/Completed Procedures
+  /// GET /v1/doctor/patient-procedures/completed
+  /// Returns: { procedures: [...], total: number, page: number, per_page: number }
+  static Future<Response> getFinishedProcedures() async {
+    return await _api.get('/v1/doctor/patient-procedures/completed');
+  }
+
+  /// Assign Date to Procedure
+  /// PUT /v1/doctor/patient-procedures/{id}/assign-date
+  /// Body: { "scheduled_date": "2025-12-05T20:30:00" }
+  static Future<Response> assignProcedureDate({
+    required int procedureId,
+    required String scheduledDate, // ISO 8601 format: "2025-12-05T20:30:00"
+  }) async {
+    return await _api.put(
+      '/v1/doctor/patient-procedures/$procedureId/assign-date',
+      data: {'scheduled_date': scheduledDate},
+    );
+  }
+
+  /// Get Procedure Details
+  /// GET /v1/doctor/patient-procedures/{id}
+  /// Returns: { status: true, result: { procedure: {...}, sibiling_procedure: [...], patient: {...}, appointment: {...}, prescription: {...} } }
+  static Future<Response> getProcedureDetails(int procedureId) async {
+    return await _api.get('/v1/doctor/patient-procedures/$procedureId');
+  }
+
+  /// Update Procedure Status
+  /// PUT /v1/doctor/patient-procedures/{id}/status
+  /// Body: { "status": "ONGOING" | "COMPLETED" | "CANCELLED" }
+  static Future<Response> updateProcedureStatus({
+    required int procedureId,
+    required String status, // "ONGOING", "COMPLETED", "CANCELLED"
+  }) async {
+    return await _api.put(
+      '/v1/doctor/patient-procedures/$procedureId/status',
+      data: {'status': status},
+    );
+  }
+
+  /// Reschedule Procedure
+  /// POST /v1/doctor/patient-procedures/reschedule
+  /// Body: { "procedure_id": int, "new_date": "2025-12-19T14:30:00", "reason": "string" }
+  static Future<Response> rescheduleProcedure({
+    required int procedureId,
+    required String newDate, // ISO 8601 format: "2025-12-19T14:30:00"
+    required String reason,
+  }) async {
+    return await _api.post(
+      '/v1/doctor/patient-procedures/reschedule',
+      data: {'procedure_id': procedureId, 'new_date': newDate, 'reason': reason},
     );
   }
 

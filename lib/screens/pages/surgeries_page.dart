@@ -4,6 +4,7 @@ import 'dart:async';
 import '../../theme/app_colors.dart';
 import '../../services/api_methods.dart';
 import 'surgery_details_page.dart';
+import 'procedures_tab_widget.dart';
 
 class SurgeriesPage extends StatefulWidget {
   const SurgeriesPage({super.key});
@@ -16,6 +17,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
     with WidgetsBindingObserver {
   int _mainTab = 0; // 0: Surgeries, 1: Procedures
   int _selectedTab = 0; // 0: Scheduled, 1: Unscheduled, 2: Finished
+  int _upcomingDays = 7; // Default: 7 days, options: 7, 30, 180
   final TextEditingController _searchController = TextEditingController();
   bool _isSearchVisible = false;
   bool _isLoading = false;
@@ -85,7 +87,9 @@ class _SurgeriesPageState extends State<SurgeriesPage>
 
     try {
       // Load upcoming surgeries (today + upcoming)
-      final response = await ApiMethods.getTodayUpcomingSurgeries();
+      final response = await ApiMethods.getTodayUpcomingSurgeries(
+        upcomingDays: _upcomingDays,
+      );
 
       if (response.statusCode == 200 && response.data != null) {
         final data = response.data;
@@ -483,9 +487,59 @@ class _SurgeriesPageState extends State<SurgeriesPage>
               ],
             ),
           ),
-          // Filter tabs (show for both Surgeries and Procedures)
+          // Upcoming days selector (only for Surgeries Scheduled tab)
+          if (_mainTab == 0 && _selectedTab == 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Row(
+                children: [
+                  Text(
+                    'Upcoming:',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
           Container(
-            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.cardBackground,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: DropdownButton<int>(
+                      value: _upcomingDays,
+                      underline: const SizedBox(),
+                      isDense: true,
+                      items: const [
+                        DropdownMenuItem(value: 7, child: Text('7 Days')),
+                        DropdownMenuItem(value: 30, child: Text('1 Month')),
+                        DropdownMenuItem(value: 180, child: Text('6 Months')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() {
+                            _upcomingDays = value;
+                          });
+                          _loadSurgeries(isInitialLoad: false);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          // Content area (Surgeries or Procedures)
+          Expanded(
+            child: _mainTab == 0
+                ? Column(
+                    children: [
+                      // Filter tabs for Surgeries
+          Container(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 16),
             padding: const EdgeInsets.all(7),
             decoration: BoxDecoration(
               color: AppColors.cardBackground,
@@ -495,230 +549,91 @@ class _SurgeriesPageState extends State<SurgeriesPage>
               children: [
                 Expanded(
                   child: _FilterTab(
-                    label: 'Scheduled',
+                                label: 'Scheduled',
                     isSelected: _selectedTab == 0,
-                    onTap: () {
-                      final previousTab = _selectedTab;
-                      setState(() => _selectedTab = 0);
-                      // Refresh data when switching tabs
-                      if (previousTab != 0) {
-                        _loadSurgeries(isInitialLoad: false);
-                      }
-                    },
+                                onTap: () {
+                                  final previousTab = _selectedTab;
+                                  setState(() => _selectedTab = 0);
+                                  if (previousTab != 0) {
+                                    _loadSurgeries(isInitialLoad: false);
+                                  }
+                                },
                   ),
                 ),
                 Expanded(
                   child: _FilterTab(
-                    label: 'Unscheduled',
+                                label: 'Unscheduled',
                     isSelected: _selectedTab == 1,
-                    onTap: () {
-                      final previousTab = _selectedTab;
-                      setState(() => _selectedTab = 1);
-                      // Refresh data when switching tabs (especially important for unscheduled)
-                      if (previousTab != 1) {
-                        _loadSurgeries(isInitialLoad: false);
-                      }
-                    },
+                                onTap: () {
+                                  final previousTab = _selectedTab;
+                                  setState(() => _selectedTab = 1);
+                                  if (previousTab != 1) {
+                                    _loadSurgeries(isInitialLoad: false);
+                                  }
+                                },
                   ),
                 ),
                 Expanded(
                   child: _FilterTab(
-                    label: 'Finished',
+                                label: 'Finished',
                     isSelected: _selectedTab == 2,
-                    onTap: () {
-                      final previousTab = _selectedTab;
-                      setState(() => _selectedTab = 2);
-                      // Refresh data when switching tabs
-                      if (previousTab != 2) {
-                        _loadSurgeries(isInitialLoad: false);
-                      }
-                    },
+                                onTap: () {
+                                  final previousTab = _selectedTab;
+                                  setState(() => _selectedTab = 2);
+                                  if (previousTab != 2) {
+                                    _loadSurgeries(isInitialLoad: false);
+                                  }
+                                },
                   ),
                 ),
               ],
             ),
           ),
-          // Content area (Surgeries or Procedures)
+                      // Surgeries list
           Expanded(
-            child: _mainTab == 0
-                ? (_isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _errorMessage != null
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                _errorMessage!,
-                                style: const TextStyle(color: Colors.red),
-                              ),
-                              const SizedBox(height: 16),
-                              ElevatedButton(
-                                onPressed: () {
-                                  // Reset error state and reload
-                                  setState(() {
-                                    _errorMessage = null;
-                                    _isLoading = true;
-                                    _isRefreshing =
-                                        false; // Reset refreshing flag
-                                  });
-                                  _loadSurgeries(isInitialLoad: true);
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.primary,
-                                  foregroundColor: Colors.white,
-                                ),
-                                child: const Text('Retry'),
-                              ),
-                            ],
-                          ),
-                        )
-                      : _buildSurgeriesList())
-                : (_isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _buildProceduresList()),
+                        child: _isLoading
+                            ? const Center(child: CircularProgressIndicator())
+                            : _errorMessage != null
+                                ? Center(
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          _errorMessage!,
+                                          style:
+                                              const TextStyle(color: Colors.red),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        ElevatedButton(
+                                          onPressed: () {
+                                            setState(() {
+                                              _errorMessage = null;
+                                              _isLoading = true;
+                                              _isRefreshing = false;
+                                            });
+                                            _loadSurgeries(isInitialLoad: true);
+                                          },
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: AppColors.primary,
+                                            foregroundColor: Colors.white,
+                                          ),
+                                          child: const Text('Retry'),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : _buildSurgeriesList(),
+                      ),
+                    ],
+                  )
+                : ProceduresTabWidget(
+                    searchQuery: _searchController.text,
+                  ),
           ),
         ],
       ),
     );
-  }
-
-  Widget _buildProceduresList() {
-    // For now, show placeholder since backend is not ready
-    // This will be updated when backend API is available
-    if (_selectedTab == 0) {
-      // Scheduled procedures
-      return RefreshIndicator(
-        onRefresh: () async {
-          // Will load procedures when backend is ready
-        },
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: [
-            SizedBox(
-              height: MediaQuery.of(context).size.height * 0.5,
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.medical_services_outlined,
-                      size: 64,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Scheduled Procedures',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'No scheduled procedures found',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    } else if (_selectedTab == 1) {
-      // Unscheduled procedures
-      return RefreshIndicator(
-        onRefresh: () async {
-          // Will load procedures when backend is ready
-        },
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: [
-            SizedBox(
-              height: MediaQuery.of(context).size.height * 0.5,
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.medical_services_outlined,
-                      size: 64,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Unscheduled Procedures',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'No unscheduled procedures found',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    } else {
-      // Finished procedures
-      return RefreshIndicator(
-        onRefresh: () async {
-          // Will load procedures when backend is ready
-        },
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: [
-            SizedBox(
-              height: MediaQuery.of(context).size.height * 0.5,
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.medical_services_outlined,
-                      size: 64,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Finished Procedures',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'No finished procedures found',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
   }
 
   Widget _buildSurgeriesList() {
@@ -748,7 +663,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
               )
             : ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 20),
                 children: [
                   // Today's Surgeries Section - Always show
                   Padding(
@@ -765,8 +680,8 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                   if (filteredToday.isNotEmpty)
                     ...filteredToday.map(
                       (surgery) => _SurgeryCard(
-                        name: surgery['name'] as String,
-                        procedure: surgery['procedure'] as String,
+                  name: surgery['name'] as String,
+                  procedure: surgery['procedure'] as String,
                         date: surgery['formatted_date'] as String,
                         status: surgery['status'] as String?,
                         surgery: surgery,
@@ -847,9 +762,9 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                           color: Colors.grey,
                         ),
                       ),
-                    ),
-                  ),
-                ],
+            ),
+          ),
+        ],
               )
             : ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -989,38 +904,38 @@ class _SurgeryCard extends StatelessWidget {
               }
             : null,
         borderRadius: BorderRadius.circular(16),
-        child: Row(
+      child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Profile picture
-            Container(
-              width: 60,
-              height: 60,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(Icons.person, color: AppColors.primary, size: 30),
+        children: [
+          // Profile picture
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
             ),
-            const SizedBox(width: 16),
+            child: Icon(Icons.person, color: AppColors.primary, size: 30),
+          ),
+          const SizedBox(width: 16),
             // Middle column: Name, Surgery, Date/Time
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
-                children: [
+              children: [
                   // First row: Name and Status button aligned
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         child: Text(
-                          name,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primary,
-                          ),
+                  name,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary,
+                  ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -1097,41 +1012,41 @@ class _SurgeryCard extends StatelessWidget {
                           ),
                         ),
                     ],
-                  ),
-                  const SizedBox(height: 4),
+                ),
+                const SizedBox(height: 4),
                   // Surgery Name
-                  Text(
-                    procedure,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF333333),
-                    ),
+                Text(
+                  procedure,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF333333),
                   ),
-                  const SizedBox(height: 8),
+                ),
+                const SizedBox(height: 8),
                   // Date and Time
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.access_time_filled,
-                        size: 16,
-                        color: AppColors.primary,
-                      ),
-                      const SizedBox(width: 4),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.access_time_filled,
+                      size: 16,
+                      color: AppColors.primary,
+                    ),
+                    const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          date,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade700,
+                      date,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade700,
                           ),
-                        ),
                       ),
-                    ],
-                  ),
-                ],
-              ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ],
+          ),
+        ],
         ),
       ),
     );
@@ -1304,7 +1219,7 @@ class _AssignDateDialogState extends State<_AssignDateDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
+                    Text(
               'Patient: ${widget.surgery['name']}',
               style: const TextStyle(
                 fontSize: 14,
@@ -1982,3 +1897,4 @@ class _RescheduleDialogState extends State<_RescheduleDialog> {
     );
   }
 }
+
