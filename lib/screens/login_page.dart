@@ -34,6 +34,17 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
+    // Check if terms and conditions are agreed
+    if (!_agreeToTerms) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please agree to Terms and Conditions to continue'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _isLoading = true;
     });
@@ -317,7 +328,7 @@ class _LoginPageState extends State<LoginPage> {
                     const SizedBox(height: 32),
                     // Login button
                     ElevatedButton(
-                      onPressed: _isLoading ? null : _submit,
+                      onPressed: (_isLoading || !_agreeToTerms) ? null : _submit,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primary,
                         foregroundColor: Colors.white,
@@ -366,24 +377,31 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                         ),
                         Expanded(
-                          child: RichText(
-                            text: TextSpan(
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey.shade700,
-                              ),
-                              children: [
-                                const TextSpan(
-                                  text: 'By continuing, you agree to our ',
+                          child: GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _agreeToTerms = !_agreeToTerms;
+                              });
+                            },
+                            child: RichText(
+                              text: TextSpan(
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade700,
                                 ),
-                                TextSpan(
-                                  text: 'Terms & Privacy Policy',
-                                  style: TextStyle(
-                                    color: AppColors.primary,
-                                    fontWeight: FontWeight.w500,
+                                children: [
+                                  const TextSpan(
+                                    text: 'By continuing, you agree to our ',
                                   ),
-                                ),
-                              ],
+                                  TextSpan(
+                                    text: 'Terms & Privacy Policy',
+                                    style: TextStyle(
+                                      color: AppColors.primary,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),

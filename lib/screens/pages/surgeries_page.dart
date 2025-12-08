@@ -4,7 +4,7 @@ import 'dart:async';
 import '../../theme/app_colors.dart';
 import '../../services/api_methods.dart';
 import 'surgery_details_page.dart';
-import 'procedures_tab_widget.dart';
+import 'procedure_details_page.dart';
 
 class SurgeriesPage extends StatefulWidget {
   const SurgeriesPage({super.key});
@@ -15,16 +15,23 @@ class SurgeriesPage extends StatefulWidget {
 
 class _SurgeriesPageState extends State<SurgeriesPage>
     with WidgetsBindingObserver {
-  int _mainTab = 0; // 0: Surgeries, 1: Procedures
+  Set<String> _selectedTypeFilters =
+      {}; // Empty = All, can select: 'SURGERY', 'PROCEDURE'
   int _selectedTab = 0; // 0: Scheduled, 1: Unscheduled, 2: Finished
   int _upcomingDays = 7; // Default: 7 days, options: 7, 30, 180
   final TextEditingController _searchController = TextEditingController();
   bool _isSearchVisible = false;
   bool _isLoading = false;
+  // Surgeries data
   List<Map<String, dynamic>> _todaySurgeries = [];
   List<Map<String, dynamic>> _upcomingSurgeries = [];
   List<Map<String, dynamic>> _finishedSurgeries = [];
   List<Map<String, dynamic>> _unassignedSurgeries = [];
+  // Procedures data
+  List<Map<String, dynamic>> _todayProcedures = [];
+  List<Map<String, dynamic>> _upcomingProcedures = [];
+  List<Map<String, dynamic>> _finishedProcedures = [];
+  List<Map<String, dynamic>> _unscheduledProcedures = [];
   String? _errorMessage;
   Timer? _refreshTimer;
   bool _isRefreshing = false; // Prevent multiple simultaneous refreshes
@@ -33,12 +40,12 @@ class _SurgeriesPageState extends State<SurgeriesPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _loadSurgeries(isInitialLoad: true);
-    // Auto-refresh surgeries every 40 seconds (only when screen is active)
+    _loadAllData(isInitialLoad: true);
+    // Auto-refresh every 40 seconds (only when screen is active)
     _refreshTimer = Timer.periodic(const Duration(seconds: 40), (timer) {
       if (mounted && _isRouteActive()) {
         print('⏰ SurgeriesPage: Auto-refresh timer triggered');
-        _loadSurgeries(isInitialLoad: false);
+        _loadAllData(isInitialLoad: false);
       }
     });
   }
@@ -57,7 +64,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
     // Refresh when app comes to foreground and this route is active
     if (state == AppLifecycleState.resumed && mounted && _isRouteActive()) {
       print('🔄 SurgeriesPage: App resumed, refreshing data');
-      _loadSurgeries(isInitialLoad: false);
+      _loadAllData(isInitialLoad: false);
     }
   }
 
@@ -65,6 +72,14 @@ class _SurgeriesPageState extends State<SurgeriesPage>
   bool _isRouteActive() {
     final route = ModalRoute.of(context);
     return route?.isCurrent ?? false;
+  }
+
+  Future<void> _loadAllData({bool isInitialLoad = false}) async {
+    // Load both surgeries and procedures
+    await Future.wait([
+      _loadSurgeries(isInitialLoad: isInitialLoad),
+      _loadProcedures(isInitialLoad: isInitialLoad),
+    ]);
   }
 
   Future<void> _loadSurgeries({bool isInitialLoad = false}) async {
@@ -204,6 +219,166 @@ class _SurgeriesPageState extends State<SurgeriesPage>
     }
   }
 
+  Future<void> _loadProcedures({bool isInitialLoad = false}) async {
+    // Prevent multiple simultaneous API calls
+    if (_isRefreshing && !isInitialLoad) {
+      print(
+        '⏸️ SurgeriesPage: Procedures refresh already in progress, skipping...',
+      );
+      return;
+    }
+
+    // Only show loading indicator on initial load
+    if (isInitialLoad) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    } else {
+      // Mark as refreshing for background updates
+      _isRefreshing = true;
+    }
+
+    try {
+      // Load upcoming procedures (today + upcoming)
+      final response = await ApiMethods.getTodayUpcomingProcedures(
+        upcomingDays: _upcomingDays,
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final data = response.data;
+        final today = data['today'] as List<dynamic>? ?? [];
+        final upcoming = data['upcoming'] as List<dynamic>? ?? [];
+
+        setState(() {
+          _todayProcedures = _parseProcedures(today);
+          _upcomingProcedures = _parseProcedures(upcoming);
+          _errorMessage = null; // Clear any previous errors
+          if (isInitialLoad) {
+            _isLoading = false;
+          }
+        });
+      } else {
+        setState(() {
+          _errorMessage = 'Failed to load procedures';
+          _isLoading = false;
+          _isRefreshing = false; // Reset refreshing flag on error
+        });
+        return;
+      }
+    } on DioException catch (e) {
+      print('Error loading procedures: ${e.type} - ${e.message}');
+      // Don't set error message for procedures, just log it
+      setState(() {
+        if (isInitialLoad) {
+          _isLoading = false;
+        }
+        _isRefreshing = false;
+      });
+      return;
+    } catch (e) {
+      print('Unexpected error loading procedures: $e');
+      setState(() {
+        if (isInitialLoad) {
+          _isLoading = false;
+        }
+        _isRefreshing = false;
+      });
+      return;
+    }
+
+    // Only load unassigned and completed if main request was successful
+    // Load unscheduled procedures
+    try {
+      final unscheduledResponse = await ApiMethods.getUnscheduledProcedures();
+      if (unscheduledResponse.statusCode == 200 &&
+          unscheduledResponse.data != null) {
+        final unscheduled = unscheduledResponse.data as List<dynamic>? ?? [];
+        setState(() {
+          _unscheduledProcedures = _parseProcedures(unscheduled);
+        });
+      }
+    } catch (e) {
+      print('Error loading unscheduled procedures: $e');
+    }
+
+    // Load finished/completed procedures
+    try {
+      final finishedResponse = await ApiMethods.getFinishedProcedures();
+      if (finishedResponse.statusCode == 200 && finishedResponse.data != null) {
+        final data = finishedResponse.data;
+        print('📋 Finished procedures API response: $data');
+
+        // Response structure: {surgeries: [...], total: number, page: number, per_page: number}
+        // Note: API returns "surgeries" field for procedures
+        final procedures =
+            data['surgeries'] as List<dynamic>? ??
+            data['procedures'] as List<dynamic>? ??
+            (data is List ? data : <dynamic>[]);
+
+        print('📋 Found ${procedures.length} finished procedures');
+        if (procedures.isNotEmpty) {
+          print('📋 Sample finished procedure: ${procedures.first}');
+        }
+
+        setState(() {
+          _finishedProcedures = _parseProcedures(procedures);
+        });
+      }
+    } catch (e) {
+      print('Error loading finished procedures: $e');
+    } finally {
+      // Always reset refreshing flag
+      _isRefreshing = false;
+    }
+  }
+
+  List<Map<String, dynamic>> _parseProcedures(List<dynamic> procedures) {
+    return procedures.map((procedure) {
+      // Try multiple possible date fields for finished procedures
+      final scheduledDate =
+          procedure['scheduled_date'] as String? ??
+          procedure['completed_date'] as String? ??
+          procedure['finished_date'] as String? ??
+          procedure['date'] as String? ??
+          '';
+
+      // Debug: Print available date fields
+      if (scheduledDate.isEmpty) {
+        print(
+          '⚠️ Procedure ${procedure['id']} has no date. Available fields: ${procedure.keys.toList()}',
+        );
+      }
+
+      String formattedDate;
+      if (scheduledDate.isEmpty) {
+        formattedDate = 'Not scheduled';
+      } else {
+        formattedDate = _formatDateTime(scheduledDate);
+        // If formatting failed and returned empty, use fallback
+        if (formattedDate.isEmpty) {
+          formattedDate = 'Not scheduled';
+        }
+      }
+
+      return {
+        'id': procedure['id'],
+        'procedure_id': procedure['procedure_id'],
+        'patient_id': procedure['patient_id'],
+        'appointment_id': procedure['appointment_id'],
+        'prescription_id': procedure['prescription_id'],
+        'scheduled_date': scheduledDate,
+        'formatted_date': formattedDate,
+        'status': procedure['status'] as String? ?? 'SCHEDULED',
+        'name':
+            procedure['patient_name'] as String? ??
+            'Patient #${procedure['patient_id'] ?? 'N/A'}',
+        'procedure': procedure['procedure_name'] as String? ?? 'Procedure',
+        'type': 'PROCEDURE', // Mark as procedure
+      };
+    }).toList();
+  }
+
   List<Map<String, dynamic>> _parseSurgeries(List<dynamic> surgeries) {
     return surgeries.map((surgery) {
       final surgeryDate = surgery['surgery_date'] as String? ?? '';
@@ -221,6 +396,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
             surgery['patient_name'] ??
             'Patient #${surgery['patient_id'] ?? 'N/A'}',
         'procedure': surgery['surgery_name'] ?? 'Surgery',
+        'type': 'SURGERY', // Mark as surgery
       };
     }).toList();
   }
@@ -241,11 +417,16 @@ class _SurgeriesPageState extends State<SurgeriesPage>
             surgery['patient_name'] ??
             'Patient #${surgery['patient_id'] ?? 'N/A'}',
         'procedure': surgery['surgery_name'] ?? 'Surgery',
+        'type': 'SURGERY', // Mark as surgery
       };
     }).toList();
   }
 
   String _formatDateTime(String dateTimeString) {
+    if (dateTimeString.isEmpty) {
+      return 'Not scheduled';
+    }
+
     try {
       final dateTime = DateTime.parse(dateTimeString);
       final months = [
@@ -273,32 +454,284 @@ class _SurgeriesPageState extends State<SurgeriesPage>
 
       return '$day $month $year, $displayHour:$displayMinute $period';
     } catch (e) {
-      return dateTimeString;
+      print('Error parsing date: $dateTimeString - $e');
+      // Return empty string so caller can handle it
+      return '';
     }
   }
 
-  List<Map<String, dynamic>> get _filteredSurgeries {
-    List<Map<String, dynamic>> surgeries = [];
+  DateTime _parseDateForSorting(String dateTimeString) {
+    if (dateTimeString.isEmpty) {
+      return DateTime(
+        0,
+      ); // Return epoch for items without dates (will sort first)
+    }
 
+    try {
+      return DateTime.parse(dateTimeString);
+    } catch (e) {
+      print('Error parsing date for sorting: $dateTimeString - $e');
+      return DateTime(0);
+    }
+  }
+
+  String _getPageTitle() {
+    return 'Procedures';
+  }
+
+  void _clearAllFilters() {
+    setState(() {
+      _selectedTypeFilters.clear();
+    });
+  }
+
+  void _showFilterMenu() {
+    // Create a local copy of selected filters for the bottom sheet
+    Set<String> tempTypeFilters = Set<String>.from(_selectedTypeFilters);
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setModalState) {
+          return Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.8,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Drag handle
+                Container(
+                  margin: const EdgeInsets.only(top: 12, bottom: 8),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 0, right: 20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(left: 20),
+                        child: Text(
+                          'Filter',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      // Clear filters button in drawer
+                      if (tempTypeFilters.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: () {
+                            setModalState(() {
+                              tempTypeFilters.clear();
+                            });
+                          },
+                          icon: const Icon(Icons.clear, size: 16),
+                          label: const Text(
+                            'Clear',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // Scrollable content
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Filter by Type
+                        const Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Type',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // All option
+                        ListTile(
+                          leading: Icon(
+                            Icons.list,
+                            color: tempTypeFilters.isEmpty
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('All'),
+                          trailing: tempTypeFilters.isEmpty
+                              ? Icon(Icons.check, color: AppColors.primary)
+                              : null,
+                          onTap: () {
+                            setModalState(() {
+                              tempTypeFilters.clear();
+                            });
+                          },
+                        ),
+                        // Surgeries option
+                        ListTile(
+                          leading: Icon(
+                            Icons.medical_services,
+                            color: tempTypeFilters.contains('SURGERY')
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('Surgeries'),
+                          trailing: Checkbox(
+                            value: tempTypeFilters.contains('SURGERY'),
+                            onChanged: (value) {
+                              setModalState(() {
+                                if (value == true) {
+                                  tempTypeFilters.add('SURGERY');
+                                } else {
+                                  tempTypeFilters.remove('SURGERY');
+                                }
+                              });
+                            },
+                            activeColor: AppColors.primary,
+                          ),
+                        ),
+                        // Procedures option
+                        ListTile(
+                          leading: Icon(
+                            Icons.healing,
+                            color: tempTypeFilters.contains('PROCEDURE')
+                                ? AppColors.primary
+                                : Colors.grey,
+                          ),
+                          title: const Text('Procedures'),
+                          trailing: Checkbox(
+                            value: tempTypeFilters.contains('PROCEDURE'),
+                            onChanged: (value) {
+                              setModalState(() {
+                                if (value == true) {
+                                  tempTypeFilters.add('PROCEDURE');
+                                } else {
+                                  tempTypeFilters.remove('PROCEDURE');
+                                }
+                              });
+                            },
+                            activeColor: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Apply button (fixed at bottom)
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        setState(() {
+                          _selectedTypeFilters = Set<String>.from(
+                            tempTypeFilters,
+                          );
+                        });
+                        Navigator.pop(context);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Apply',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  List<Map<String, dynamic>> _getCombinedData() {
+    List<Map<String, dynamic>> allData = [];
+
+    // Get surgeries based on selected tab
+    List<Map<String, dynamic>> surgeries = [];
     if (_selectedTab == 0) {
-      // Scheduled: Show today's surgeries first, then upcoming
       surgeries = [..._todaySurgeries, ..._upcomingSurgeries];
     } else if (_selectedTab == 1) {
-      // Unscheduled
       surgeries = _unassignedSurgeries;
     } else if (_selectedTab == 2) {
-      // Finished
       surgeries = _finishedSurgeries;
     }
 
-    // Apply search filter if search is active
+    // Get procedures based on selected tab
+    List<Map<String, dynamic>> procedures = [];
+    if (_selectedTab == 0) {
+      procedures = [..._todayProcedures, ..._upcomingProcedures];
+    } else if (_selectedTab == 1) {
+      procedures = _unscheduledProcedures;
+    } else if (_selectedTab == 2) {
+      procedures = _finishedProcedures;
+    }
+
+    // Combine and filter by type
+    if (_selectedTypeFilters.isEmpty) {
+      // Show all
+      allData = [...surgeries, ...procedures];
+    } else {
+      if (_selectedTypeFilters.contains('SURGERY')) {
+        allData.addAll(surgeries);
+      }
+      if (_selectedTypeFilters.contains('PROCEDURE')) {
+        allData.addAll(procedures);
+      }
+    }
+
+    // Apply search filter
     if (_searchController.text.isNotEmpty) {
       final query = _searchController.text.toLowerCase();
-      surgeries = surgeries.where((surgery) {
-        final name = (surgery['name'] as String? ?? '').toLowerCase();
-        final procedure = (surgery['procedure'] as String? ?? '').toLowerCase();
-        final date = (surgery['formatted_date'] as String? ?? '').toLowerCase();
-        final status = (surgery['status'] as String? ?? '').toLowerCase();
+      allData = allData.where((item) {
+        final name = (item['name'] as String? ?? '').toLowerCase();
+        final procedure = (item['procedure'] as String? ?? '').toLowerCase();
+        final date = (item['formatted_date'] as String? ?? '').toLowerCase();
+        final status = (item['status'] as String? ?? '').toLowerCase();
 
         return name.contains(query) ||
             procedure.contains(query) ||
@@ -307,7 +740,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
       }).toList();
     }
 
-    return surgeries;
+    return allData;
   }
 
   @override
@@ -323,21 +756,22 @@ class _SurgeriesPageState extends State<SurgeriesPage>
               children: [
                 Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 16,
+                    horizontal: 25,
+                    vertical: 15,
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const SizedBox(width: 48), // Spacer for centering
                       Text(
-                        _mainTab == 0 ? 'Surgeries' : 'Procedures',
+                        _getPageTitle(),
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
                           color: Color(0xFF333333),
                         ),
                       ),
+                      // Search icon
                       IconButton(
                         icon: Icon(
                           _isSearchVisible ? Icons.close : Icons.search,
@@ -354,12 +788,56 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                     ],
                   ),
                 ),
+                // Filter section (below title)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 1,
+                  ),
+
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      // Clear filters button
+                      if (_selectedTypeFilters.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: _clearAllFilters,
+                          icon: const Icon(Icons.clear, size: 16),
+                          label: const Text(
+                            'Clear',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                      if (_selectedTypeFilters.isNotEmpty)
+                        const SizedBox(width: 8),
+                      // Filter icon
+                      IconButton(
+                        icon: Icon(
+                          Icons.filter_list,
+                          color: _selectedTypeFilters.isNotEmpty
+                              ? AppColors.primary
+                              : Colors.grey,
+                        ),
+                        onPressed: _showFilterMenu,
+                      ),
+                    ],
+                  ),
+                ),
                 // Search bar
                 if (_isSearchVisible)
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,
-                      vertical: 8,
+                      vertical: 3,
                     ),
                     child: TextField(
                       controller: _searchController,
@@ -406,91 +884,10 @@ class _SurgeriesPageState extends State<SurgeriesPage>
               ],
             ),
           ),
-          // Main tabs (Surgeries/Procedures)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _mainTab = 0;
-                        _selectedTab = 0; // Reset to first sub-tab
-                      });
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      decoration: BoxDecoration(
-                        color: _mainTab == 0
-                            ? AppColors.primary
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: _mainTab == 0
-                              ? AppColors.primary
-                              : Colors.grey.shade300,
-                          width: 1,
-                        ),
-                      ),
-                      child: Text(
-                        'Surgeries',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: _mainTab == 0
-                              ? Colors.white
-                              : Colors.grey.shade700,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _mainTab = 1;
-                        _selectedTab = 0; // Reset to first sub-tab
-                      });
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      decoration: BoxDecoration(
-                        color: _mainTab == 1
-                            ? AppColors.primary
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: _mainTab == 1
-                              ? AppColors.primary
-                              : Colors.grey.shade300,
-                          width: 1,
-                        ),
-                      ),
-                      child: Text(
-                        'Procedures',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: _mainTab == 1
-                              ? Colors.white
-                              : Colors.grey.shade700,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Upcoming days selector (only for Surgeries Scheduled tab)
-          if (_mainTab == 0 && _selectedTab == 0)
+          // Upcoming days selector (only for Scheduled tab)
+          if (_selectedTab == 0)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
               child: Row(
                 children: [
                   Text(
@@ -501,12 +898,15 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                       color: Colors.grey.shade700,
                     ),
                   ),
-                  const SizedBox(width: 8),
-          Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  const SizedBox(width: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.cardBackground,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(3),
                       border: Border.all(color: Colors.grey.shade300),
                     ),
                     child: DropdownButton<int>(
@@ -523,7 +923,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                           setState(() {
                             _upcomingDays = value;
                           });
-                          _loadSurgeries(isInitialLoad: false);
+                          _loadAllData(isInitialLoad: false);
                         }
                       },
                     ),
@@ -533,109 +933,588 @@ class _SurgeriesPageState extends State<SurgeriesPage>
             ),
           // Content area (Surgeries or Procedures)
           Expanded(
-            child: _mainTab == 0
-                ? Column(
-                    children: [
-                      // Filter tabs for Surgeries
-          Container(
-                        margin: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 16),
-            padding: const EdgeInsets.all(7),
-            decoration: BoxDecoration(
-              color: AppColors.cardBackground,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: _FilterTab(
-                                label: 'Scheduled',
-                    isSelected: _selectedTab == 0,
-                                onTap: () {
-                                  final previousTab = _selectedTab;
-                                  setState(() => _selectedTab = 0);
-                                  if (previousTab != 0) {
-                                    _loadSurgeries(isInitialLoad: false);
-                                  }
-                                },
+                // Filter tabs
+                Container(
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 7,
+                    horizontal: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.cardBackground,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _FilterTab(
+                          label: 'Scheduled',
+                          isSelected: _selectedTab == 0,
+                          onTap: () {
+                            final previousTab = _selectedTab;
+                            setState(() => _selectedTab = 0);
+                            if (previousTab != 0) {
+                              _loadAllData(isInitialLoad: false);
+                            }
+                          },
+                        ),
+                      ),
+                      Expanded(
+                        child: _FilterTab(
+                          label: 'Unscheduled',
+                          isSelected: _selectedTab == 1,
+                          onTap: () {
+                            final previousTab = _selectedTab;
+                            setState(() => _selectedTab = 1);
+                            if (previousTab != 1) {
+                              _loadAllData(isInitialLoad: false);
+                            }
+                          },
+                        ),
+                      ),
+                      Expanded(
+                        child: _FilterTab(
+                          label: 'Finished',
+                          isSelected: _selectedTab == 2,
+                          onTap: () {
+                            final previousTab = _selectedTab;
+                            setState(() => _selectedTab = 2);
+                            if (previousTab != 2) {
+                              _loadAllData(isInitialLoad: false);
+                            }
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+                // Combined list
                 Expanded(
-                  child: _FilterTab(
-                                label: 'Unscheduled',
-                    isSelected: _selectedTab == 1,
-                                onTap: () {
-                                  final previousTab = _selectedTab;
-                                  setState(() => _selectedTab = 1);
-                                  if (previousTab != 1) {
-                                    _loadSurgeries(isInitialLoad: false);
-                                  }
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _errorMessage != null
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                _errorMessage!,
+                                style: const TextStyle(color: Colors.red),
+                              ),
+                              const SizedBox(height: 16),
+                              ElevatedButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _errorMessage = null;
+                                    _isLoading = true;
+                                    _isRefreshing = false;
+                                  });
+                                  _loadAllData(isInitialLoad: true);
                                 },
-                  ),
-                ),
-                Expanded(
-                  child: _FilterTab(
-                                label: 'Finished',
-                    isSelected: _selectedTab == 2,
-                                onTap: () {
-                                  final previousTab = _selectedTab;
-                                  setState(() => _selectedTab = 2);
-                                  if (previousTab != 2) {
-                                    _loadSurgeries(isInitialLoad: false);
-                                  }
-                                },
-                  ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.primary,
+                                  foregroundColor: Colors.white,
+                                ),
+                                child: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        )
+                      : _buildCombinedList(),
                 ),
               ],
             ),
-          ),
-                      // Surgeries list
-          Expanded(
-                        child: _isLoading
-                            ? const Center(child: CircularProgressIndicator())
-                            : _errorMessage != null
-                                ? Center(
-                                    child: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Text(
-                                          _errorMessage!,
-                                          style:
-                                              const TextStyle(color: Colors.red),
-                                        ),
-                                        const SizedBox(height: 16),
-                                        ElevatedButton(
-                                          onPressed: () {
-                                            setState(() {
-                                              _errorMessage = null;
-                                              _isLoading = true;
-                                              _isRefreshing = false;
-                                            });
-                                            _loadSurgeries(isInitialLoad: true);
-                                          },
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: AppColors.primary,
-                                            foregroundColor: Colors.white,
-                                          ),
-                                          child: const Text('Retry'),
-                                        ),
-                                      ],
-                                    ),
-                                  )
-                                : _buildSurgeriesList(),
-                      ),
-                    ],
-                  )
-                : ProceduresTabWidget(
-                    searchQuery: _searchController.text,
-                  ),
           ),
         ],
       ),
     );
   }
 
+  Widget _buildCombinedList() {
+    final allData = _getCombinedData();
+
+    if (_selectedTab == 0) {
+      // Scheduled: Show today's first, then upcoming - all mixed and sorted
+      // Get today's items (surgeries + procedures)
+      final todayItems = <Map<String, dynamic>>[];
+      for (final item in allData) {
+        if (item['type'] == 'SURGERY') {
+          final isToday = _todaySurgeries.any((ts) => ts['id'] == item['id']);
+          if (isToday) {
+            todayItems.add(item);
+          }
+        } else if (item['type'] == 'PROCEDURE') {
+          final isToday = _todayProcedures.any((tp) => tp['id'] == item['id']);
+          if (isToday) {
+            todayItems.add(item);
+          }
+        }
+      }
+
+      // Get upcoming items (surgeries + procedures)
+      final upcomingItems = <Map<String, dynamic>>[];
+      for (final item in allData) {
+        if (item['type'] == 'SURGERY') {
+          final isUpcoming = _upcomingSurgeries.any(
+            (us) => us['id'] == item['id'],
+          );
+          if (isUpcoming) {
+            upcomingItems.add(item);
+          }
+        } else if (item['type'] == 'PROCEDURE') {
+          final isUpcoming = _upcomingProcedures.any(
+            (up) => up['id'] == item['id'],
+          );
+          if (isUpcoming) {
+            upcomingItems.add(item);
+          }
+        }
+      }
+
+      // Sort by date and time
+      todayItems.sort((a, b) {
+        final dateA = _parseDateForSorting(
+          a['scheduled_date'] ?? a['surgery_date'] ?? '',
+        );
+        final dateB = _parseDateForSorting(
+          b['scheduled_date'] ?? b['surgery_date'] ?? '',
+        );
+        return dateA.compareTo(dateB);
+      });
+
+      upcomingItems.sort((a, b) {
+        final dateA = _parseDateForSorting(
+          a['scheduled_date'] ?? a['surgery_date'] ?? '',
+        );
+        final dateB = _parseDateForSorting(
+          b['scheduled_date'] ?? b['surgery_date'] ?? '',
+        );
+        return dateA.compareTo(dateB);
+      });
+
+      final isEmpty = todayItems.isEmpty && upcomingItems.isEmpty;
+
+      return RefreshIndicator(
+        onRefresh: () async {
+          await _loadAllData(isInitialLoad: false);
+        },
+        child: isEmpty
+            ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: const Center(
+                      child: Text(
+                        'No upcoming surgeries or procedures',
+                        style: TextStyle(fontSize: 16, color: Colors.grey),
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                children: [
+                  // Today's (mixed surgeries and procedures)
+                  if (todayItems.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, bottom: 12),
+                      child: Text(
+                        "Today's",
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ),
+                    ...todayItems.map((item) {
+                      if (item['type'] == 'SURGERY') {
+                        return _SurgeryCard(
+                          name: item['name'] as String,
+                          procedure: item['procedure'] as String,
+                          date: item['formatted_date'] as String,
+                          status: item['status'] as String?,
+                          surgery: item,
+                          isTodaysSurgery: true,
+                          onStatusChange: () => _loadAllData(),
+                        );
+                      } else {
+                        final status = item['status'] as String? ?? '';
+                        final canChangeStatus =
+                            status.toUpperCase() == 'RESCHEDULED' ||
+                            status.toUpperCase() == 'SCHEDULED';
+                        return _buildProcedureCard(
+                          item,
+                          true,
+                          onStatusChange: canChangeStatus
+                              ? () => _loadAllData()
+                              : null,
+                        );
+                      }
+                    }),
+                  ],
+                  // Upcoming (mixed surgeries and procedures)
+                  if (upcomingItems.isNotEmpty) ...[
+                    Padding(
+                      padding: EdgeInsets.only(
+                        top: todayItems.isNotEmpty ? 16 : 8,
+                        bottom: 12,
+                      ),
+                      child: Text(
+                        'Upcoming',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ),
+                    ...upcomingItems.map((item) {
+                      if (item['type'] == 'SURGERY') {
+                        final status = item['status'] as String? ?? '';
+                        final canChangeStatus =
+                            status.toUpperCase() == 'RESCHEDULED' ||
+                            status.toUpperCase() == 'SCHEDULED';
+                        return _SurgeryCard(
+                          name: item['name'] as String,
+                          procedure: item['procedure'] as String,
+                          date: item['formatted_date'] as String,
+                          status: item['status'] as String?,
+                          surgery: item,
+                          isTodaysSurgery: false,
+                          onStatusChange: canChangeStatus
+                              ? () => _loadAllData()
+                              : null,
+                        );
+                      } else {
+                        final status = item['status'] as String? ?? '';
+                        final canChangeStatus =
+                            status.toUpperCase() == 'RESCHEDULED' ||
+                            status.toUpperCase() == 'SCHEDULED';
+                        return _buildProcedureCard(
+                          item,
+                          false,
+                          onStatusChange: canChangeStatus
+                              ? () => _loadAllData()
+                              : null,
+                        );
+                      }
+                    }),
+                  ],
+                ],
+              ),
+      );
+    } else {
+      // Unscheduled or Finished: Show flat list
+      final isEmpty = allData.isEmpty;
+
+      return RefreshIndicator(
+        onRefresh: () async {
+          await _loadAllData(isInitialLoad: false);
+        },
+        child: isEmpty
+            ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: Center(
+                      child: Text(
+                        _selectedTab == 1
+                            ? 'No unscheduled surgeries or procedures'
+                            : 'No finished surgeries or procedures',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: allData.length,
+                itemBuilder: (context, index) {
+                  final item = allData[index];
+                  if (item['type'] == 'SURGERY') {
+                    return _SurgeryCard(
+                      name: item['name'] as String,
+                      procedure: item['procedure'] as String,
+                      date: item['formatted_date'] as String,
+                      isUnassigned: _selectedTab == 1,
+                      onAssign: _selectedTab == 1
+                          ? () => _showAssignDateDialog(item)
+                          : null,
+                      status: item['status'] as String?,
+                      surgery: item,
+                      isTodaysSurgery: false,
+                      onStatusChange: null,
+                    );
+                  } else {
+                    return _buildProcedureCard(item, false);
+                  }
+                },
+              ),
+      );
+    }
+  }
+
+  Widget _buildProcedureCard(
+    Map<String, dynamic> procedure,
+    bool isToday, {
+    VoidCallback? onStatusChange,
+  }) {
+    final isUnscheduled = _selectedTab == 1;
+    final status = procedure['status'] as String? ?? '';
+    final statusUpper = status.toUpperCase();
+    final canChangeStatus =
+        onStatusChange != null &&
+        (isToday || statusUpper == 'RESCHEDULED' || statusUpper == 'SCHEDULED');
+    final statusChangeCallback = onStatusChange; // Store for use in button
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: InkWell(
+        onTap: procedure['id'] != null
+            ? () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => ProcedureDetailsPage(
+                      procedureId: procedure['id'] as int,
+                    ),
+                  ),
+                );
+              }
+            : null,
+        borderRadius: BorderRadius.circular(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.person, color: AppColors.primary, size: 30),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          procedure['name'] as String,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (isUnscheduled)
+                        ElevatedButton(
+                          onPressed: () =>
+                              _showAssignDateDialogForProcedure(procedure),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: const Text(
+                            'Schedule',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                      else if (canChangeStatus && statusChangeCallback != null)
+                        ElevatedButton(
+                          onPressed: () => _showProcedureStatusDialog(
+                            context,
+                            procedure,
+                            statusChangeCallback,
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
+                            ),
+                            minimumSize: const Size(8, 28),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: Text(
+                            _formatProcedureStatusText(status),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                      else if (!isUnscheduled && status.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            _formatProcedureStatusText(status),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  // Procedure Name with label
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.orange, width: 1),
+                        ),
+                        child: const Text(
+                          'Procedure',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          procedure['procedure'] as String,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.access_time,
+                        size: 16,
+                        color: Colors.grey.shade600,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        isUnscheduled
+                            ? 'Unscheduled'
+                            : procedure['formatted_date'] as String,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatProcedureStatusText(String status) {
+    switch (status.toUpperCase()) {
+      case 'SCHEDULED':
+      case 'SHEDULED':
+        return 'Scheduled';
+      case 'ONGOING':
+        return 'Ongoing';
+      case 'COMPLETED':
+        return 'Completed';
+      case 'CANCELLED':
+        return 'Cancelled';
+      case 'RESCHEDULED':
+        return 'Rescheduled';
+      default:
+        return status;
+    }
+  }
+
+  void _showProcedureStatusDialog(
+    BuildContext context,
+    Map<String, dynamic> procedure,
+    VoidCallback onStatusChanged,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => _ProcedureStatusDialog(
+        procedure: procedure,
+        currentStatus: procedure['status'] as String?,
+        onStatusChanged: onStatusChanged,
+      ),
+    );
+  }
+
+  Future<void> _showAssignDateDialogForProcedure(
+    Map<String, dynamic> procedure,
+  ) async {
+    // This will need to be implemented similar to surgery assign dialog
+    // For now, just show a placeholder
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Procedure scheduling dialog coming soon')),
+    );
+  }
+
+  // Old method - kept for reference but not used
+  // Old method removed - using _buildCombinedList instead
+  /*
   Widget _buildSurgeriesList() {
     if (_selectedTab == 0) {
       // Upcoming tab: Show today's surgeries first, then upcoming
@@ -663,7 +1542,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
               )
             : ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
                 children: [
                   // Today's Surgeries Section - Always show
                   Padding(
@@ -680,8 +1559,8 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                   if (filteredToday.isNotEmpty)
                     ...filteredToday.map(
                       (surgery) => _SurgeryCard(
-                  name: surgery['name'] as String,
-                  procedure: surgery['procedure'] as String,
+                        name: surgery['name'] as String,
+                        procedure: surgery['procedure'] as String,
                         date: surgery['formatted_date'] as String,
                         status: surgery['status'] as String?,
                         surgery: surgery,
@@ -762,9 +1641,9 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                           color: Colors.grey,
                         ),
                       ),
-            ),
-          ),
-        ],
+                    ),
+                  ),
+                ],
               )
             : ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -789,6 +1668,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
       );
     }
   }
+  */
 
   List<Map<String, dynamic>> _applySearchFilter(
     List<Map<String, dynamic>> surgeries,
@@ -818,8 +1698,8 @@ class _SurgeriesPageState extends State<SurgeriesPage>
     );
 
     if (result != null && mounted) {
-      // Reload surgeries after assignment
-      await _loadSurgeries();
+      // Reload all data after assignment
+      await _loadAllData();
     }
   }
 }
@@ -904,38 +1784,38 @@ class _SurgeryCard extends StatelessWidget {
               }
             : null,
         borderRadius: BorderRadius.circular(16),
-      child: Row(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Profile picture
-          Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
+          children: [
+            // Profile picture
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.person, color: AppColors.primary, size: 30),
             ),
-            child: Icon(Icons.person, color: AppColors.primary, size: 30),
-          ),
-          const SizedBox(width: 16),
+            const SizedBox(width: 16),
             // Middle column: Name, Surgery, Date/Time
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
-              children: [
+                children: [
                   // First row: Name and Status button aligned
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         child: Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
-                  ),
+                          name,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -964,7 +1844,10 @@ class _SurgeryCard extends StatelessWidget {
                         )
                       else if (!isUnassigned &&
                           surgery != null &&
-                          isTodaysSurgery &&
+                          (isTodaysSurgery ||
+                              (status != null &&
+                                  (status!.toUpperCase() == 'RESCHEDULED' ||
+                                      status!.toUpperCase() == 'SCHEDULED'))) &&
                           onStatusChange != null)
                         ElevatedButton(
                           onPressed: () => _showStatusDialog(context),
@@ -992,7 +1875,9 @@ class _SurgeryCard extends StatelessWidget {
                       else if (!isUnassigned &&
                           surgery != null &&
                           !isTodaysSurgery &&
-                          status != null)
+                          status != null &&
+                          status!.toUpperCase() != 'RESCHEDULED' &&
+                          status!.toUpperCase() != 'SCHEDULED')
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,
@@ -1012,41 +1897,70 @@ class _SurgeryCard extends StatelessWidget {
                           ),
                         ),
                     ],
-                ),
-                const SizedBox(height: 4),
-                  // Surgery Name
-                Text(
-                  procedure,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF333333),
                   ),
-                ),
-                const SizedBox(height: 8),
-                  // Date and Time
-                Row(
-                  children: [
-                    Icon(
-                      Icons.access_time_filled,
-                      size: 16,
-                      color: AppColors.primary,
-                    ),
-                    const SizedBox(width: 4),
+                  const SizedBox(height: 4),
+                  // Surgery Name with label
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: AppColors.primary,
+                            width: 1,
+                          ),
+                        ),
+                        child: Text(
+                          'Surgery',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                      date,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade700,
+                          procedure,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Color(0xFF333333),
                           ),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  // Date and Time
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.access_time_filled,
+                        size: 16,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          date,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
         ),
       ),
     );
@@ -1219,7 +2133,7 @@ class _AssignDateDialogState extends State<_AssignDateDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-                    Text(
+            Text(
               'Patient: ${widget.surgery['name']}',
               style: const TextStyle(
                 fontSize: 14,
@@ -1898,3 +2812,307 @@ class _RescheduleDialogState extends State<_RescheduleDialog> {
   }
 }
 
+class _ProcedureStatusDialog extends StatefulWidget {
+  const _ProcedureStatusDialog({
+    required this.procedure,
+    required this.currentStatus,
+    required this.onStatusChanged,
+  });
+
+  final Map<String, dynamic> procedure;
+  final String? currentStatus;
+  final VoidCallback onStatusChanged;
+
+  @override
+  State<_ProcedureStatusDialog> createState() => _ProcedureStatusDialogState();
+}
+
+class _ProcedureStatusDialogState extends State<_ProcedureStatusDialog> {
+  String? _selectedStatus;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedStatus = widget.currentStatus;
+  }
+
+  Future<void> _updateStatus() async {
+    if (_selectedStatus == null || _selectedStatus == widget.currentStatus) {
+      Navigator.of(context).pop();
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final procedureId = widget.procedure['id'] as int;
+      final statusToUpdate = _selectedStatus!.toUpperCase();
+      print(
+        '🔄 Updating procedure $procedureId status from ${widget.currentStatus} to $statusToUpdate',
+      );
+
+      final response = await ApiMethods.updateProcedureStatus(
+        procedureId: procedureId,
+        status: statusToUpdate,
+      );
+
+      print('✅ API Response Status: ${response.statusCode}');
+      print('✅ API Response Data: ${response.data}');
+
+      if (response.statusCode == 200 && mounted) {
+        Navigator.of(context).pop();
+        widget.onStatusChanged();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Status updated to $_selectedStatus'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        final errorMsg = response.data?['message'] ?? 'Failed to update status';
+        throw Exception(errorMsg);
+      }
+    } catch (e) {
+      print('❌ Error updating procedure status: $e');
+      if (e is DioException) {
+        print('❌ DioException details: ${e.response?.data}');
+        print('❌ DioException status: ${e.response?.statusCode}');
+        print('❌ DioException message: ${e.message}');
+      }
+      if (mounted) {
+        String errorMessage = 'Error updating status';
+        if (e is DioException) {
+          if (e.response?.data != null && e.response!.data is Map) {
+            errorMessage =
+                e.response!.data['message'] ??
+                e.response!.data['error'] ??
+                e.message ??
+                'Failed to update status';
+          } else {
+            errorMessage = e.message ?? 'Network error occurred';
+          }
+        } else {
+          errorMessage = e.toString();
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toUpperCase()) {
+      case 'ONGOING':
+        return Colors.orange;
+      case 'COMPLETED':
+        return Colors.green;
+      case 'CANCELLED':
+        return Colors.red;
+      default:
+        return AppColors.primary;
+    }
+  }
+
+  List<String> _getAvailableStatusOptions() {
+    final currentStatus = widget.currentStatus?.toUpperCase() ?? '';
+
+    // If status is SCHEDULED, SHEDULED, or RESCHEDULED, only allow ONGOING or CANCELLED
+    if (currentStatus == 'SCHEDULED' ||
+        currentStatus == 'SHEDULED' ||
+        currentStatus == 'RESCHEDULED') {
+      return ['ONGOING', 'CANCELLED'];
+    }
+
+    // If status is ONGOING, only allow COMPLETED or CANCELLED
+    if (currentStatus == 'ONGOING') {
+      return ['COMPLETED', 'CANCELLED'];
+    }
+
+    // For other statuses (COMPLETED, CANCELLED), no options available
+    return [];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final statusOptions = _getAvailableStatusOptions();
+
+    // If no options available
+    if (statusOptions.isEmpty) {
+      return AlertDialog(
+        backgroundColor: Colors.white,
+        title: Text(
+          'Update Procedure Status',
+          style: TextStyle(
+            color: AppColors.primary,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          'This procedure is already ${widget.currentStatus}. Status cannot be changed.',
+          style: const TextStyle(color: AppColors.textPrimary),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text('OK'),
+          ),
+        ],
+      );
+    }
+
+    return AlertDialog(
+      backgroundColor: Colors.white,
+      title: Text(
+        'Update Procedure Status',
+        style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold),
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.procedure['patient_name'] != null)
+              Text(
+                'Patient: ${widget.procedure['patient_name']}',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            if (widget.currentStatus != null) ...[
+              if (widget.procedure['patient_name'] != null)
+                const SizedBox(height: 8),
+              Text(
+                'Current Status: ${widget.currentStatus}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            ...statusOptions.map((status) {
+              final isSelected = _selectedStatus?.toUpperCase() == status;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: InkWell(
+                  onTap: () {
+                    setState(() {
+                      _selectedStatus = status;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? _getStatusColor(status).withOpacity(0.1)
+                          : AppColors.cardBackground,
+                      border: Border.all(
+                        color: isSelected
+                            ? _getStatusColor(status)
+                            : Colors.grey.shade300,
+                        width: isSelected ? 2 : 1,
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 20,
+                          height: 20,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isSelected
+                                ? _getStatusColor(status)
+                                : Colors.transparent,
+                            border: Border.all(
+                              color: isSelected
+                                  ? _getStatusColor(status)
+                                  : Colors.grey.shade400,
+                              width: 2,
+                            ),
+                          ),
+                          child: isSelected
+                              ? const Icon(
+                                  Icons.check,
+                                  size: 12,
+                                  color: Colors.white,
+                                )
+                              : null,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            status,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: isSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                              color: isSelected
+                                  ? _getStatusColor(status)
+                                  : Colors.black87,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+          child: Text('Cancel', style: TextStyle(color: Colors.grey.shade700)),
+        ),
+        ElevatedButton(
+          onPressed: _isLoading ? null : _updateStatus,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          child: _isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('Update'),
+        ),
+      ],
+    );
+  }
+}
