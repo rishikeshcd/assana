@@ -454,7 +454,7 @@ class ApiMethods {
 
   // ========== SETTINGS ==========
 
-  /// Get User Settings
+  /// Get User Settingsss
   /// GET /settings
   static Future<Response> getSettings() async {
     return await _api.get('/settings');
