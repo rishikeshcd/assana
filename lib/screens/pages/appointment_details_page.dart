@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:url_launcher/url_launcher.dart';
 import '../../theme/app_colors.dart';
 import '../../services/api_methods.dart';
 import 'medical_report_viewer_page.dart';
@@ -19,6 +20,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage>
   Map<String, dynamic>? _bookingData;
   Map<String, dynamic>? _patientData;
   List<dynamic>? _appointmentHistory;
+  Map<String, dynamic>? _meetData;
   String? _errorMessage;
   Timer? _refreshTimer;
   bool _isRefreshing = false;
@@ -94,6 +96,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage>
           _bookingData = result['booking'] as Map<String, dynamic>?;
           _patientData = result['patient'] as Map<String, dynamic>?;
           _appointmentHistory = result['appointment_history'] as List<dynamic>?;
+          _meetData = result['meet_data'] as Map<String, dynamic>?;
           if (isInitialLoad) {
             _isLoading = false;
           }
@@ -127,6 +130,53 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage>
         builder: (context) => MedicalReportViewerPage(reportUrl: url),
       ),
     );
+  }
+
+  Future<void> _joinMeeting(String meetingUrl) async {
+    try {
+      final uri = Uri.parse(meetingUrl);
+      print('🔗 Attempting to launch meeting URL: $meetingUrl');
+      
+      // Try to launch URL - canLaunchUrl can be unreliable, so we try anyway
+      bool launched = false;
+      if (await canLaunchUrl(uri)) {
+        print('✅ canLaunchUrl returned true, launching...');
+        launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        // Even if canLaunchUrl returns false, try launching anyway
+        print('⚠️ canLaunchUrl returned false, but trying to launch anyway...');
+        try {
+          launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (e) {
+          print('❌ Error launching URL: $e');
+          // Try with platformDefault mode as fallback
+          try {
+            launched = await launchUrl(uri, mode: LaunchMode.platformDefault);
+          } catch (e2) {
+            print('❌ Error with platformDefault mode: $e2');
+          }
+        }
+      }
+      
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open meeting URL. Please try again.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ Error parsing or launching URL: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error joining meeting: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   String? _getMedicalReportLink() {
@@ -183,6 +233,32 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage>
     } catch (e) {
       return dateTimeString;
     }
+  }
+
+  String _formatAppointmentMode(String mode) {
+    final modeUpper = mode.toUpperCase();
+    if (modeUpper == 'PHYSICAL') {
+      return 'Physical';
+    } else if (modeUpper == 'ONLINE') {
+      return 'Online';
+    } else {
+      return mode;
+    }
+  }
+
+  bool _isOnlineAppointment() {
+    final mode = _bookingData?['appointment_mode'] as String? ??
+        _bookingData?['mode'] as String?;
+    return mode != null && mode.toUpperCase() == 'ONLINE';
+  }
+
+  bool _hasMeetingUrl() {
+    final meetingUrl = _meetData?['meeting_url'] as String?;
+    return meetingUrl != null && meetingUrl.isNotEmpty;
+  }
+
+  String? _getMeetingUrl() {
+    return _meetData?['meeting_url'] as String?;
   }
 
   @override
@@ -258,7 +334,52 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage>
                         content: _bookingData!['appointment_type'] as String,
                         icon: Icons.event,
                       ),
-                    const SizedBox(height: 16),
+                    if (_bookingData?['appointment_type'] != null)
+                      const SizedBox(height: 16),
+
+                    // Appointment Mode
+                    if (_bookingData?['appointment_mode'] != null ||
+                        _bookingData?['mode'] != null)
+                      _DetailCard(
+                        title: 'Appointment Mode',
+                        content: _formatAppointmentMode(
+                          _bookingData?['appointment_mode'] as String? ??
+                              _bookingData?['mode'] as String? ??
+                              'N/A',
+                        ),
+                        icon: Icons.video_call,
+                      ),
+                    if (_bookingData?['appointment_mode'] != null ||
+                        _bookingData?['mode'] != null)
+                      const SizedBox(height: 16),
+
+                    // Join Meeting Button (only for ONLINE appointments)
+                    if (_isOnlineAppointment() && _hasMeetingUrl())
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _joinMeeting(_getMeetingUrl()!),
+                          icon: const Icon(Icons.video_call, size: 20),
+                          label: const Text(
+                            'Join Meeting',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 2,
+                          ),
+                        ),
+                      ),
+                    if (_isOnlineAppointment() && _hasMeetingUrl())
+                      const SizedBox(height: 16),
 
                     // Status
                     if (_bookingData?['api_status'] != null ||

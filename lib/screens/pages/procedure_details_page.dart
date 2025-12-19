@@ -716,7 +716,15 @@ class _StatusDialogState extends State<_StatusDialog> {
       print('✅ API Response Status: ${response.statusCode}');
       print('✅ API Response Data: ${response.data}');
 
-      if (response.statusCode == 200 && mounted) {
+      // Check HTTP status code and response body status field (if it exists)
+      // If status field doesn't exist, treat HTTP 200 as success
+      // If status field exists and is false, treat as error
+      final hasStatusField = response.data != null &&
+          response.data is Map &&
+          response.data.containsKey('status');
+      final isStatusFalse = hasStatusField && response.data['status'] == false;
+
+      if (response.statusCode == 200 && !isStatusFalse && mounted) {
         Navigator.of(context).pop();
         widget.onStatusChanged();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -726,7 +734,9 @@ class _StatusDialogState extends State<_StatusDialog> {
           ),
         );
       } else {
-        final errorMsg = response.data?['message'] ?? 'Failed to update status';
+        // Extract error message from response body
+        final errorMsg = response.data?['message'] ??
+            'Failed to update status';
         throw Exception(errorMsg);
       }
     } catch (e) {
@@ -1098,7 +1108,15 @@ class _RescheduleDialogState extends State<_RescheduleDialog> {
       print('✅ Reschedule API Response Status: ${response.statusCode}');
       print('✅ Reschedule API Response Data: ${response.data}');
 
-      if (response.statusCode == 200 && mounted) {
+      // Check HTTP status code and response body status field (if it exists)
+      // If status field doesn't exist, treat HTTP 200 as success
+      // If status field exists and is false, treat as error
+      final hasStatusField = response.data != null &&
+          response.data is Map &&
+          response.data.containsKey('status');
+      final isStatusFalse = hasStatusField && response.data['status'] == false;
+
+      if (response.statusCode == 200 && !isStatusFalse && mounted) {
         Navigator.of(context).pop();
         widget.onRescheduled();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1108,7 +1126,9 @@ class _RescheduleDialogState extends State<_RescheduleDialog> {
           ),
         );
       } else {
-        final errorMsg = response.data?['message'] ?? 'Failed to reschedule procedure';
+        // Extract error message from response body
+        final errorMsg = response.data?['message'] ??
+            'Failed to reschedule procedure';
         throw Exception(errorMsg);
       }
     } catch (e) {

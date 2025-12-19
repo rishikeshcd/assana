@@ -55,15 +55,47 @@ class _LoginPageState extends State<LoginPage> {
         password: _passwordController.text,
       );
 
+      print('🔐 Login API Response Status: ${response.statusCode}');
+      print('🔐 Login API Response Data: ${response.data}');
+
       final data = response.data;
 
-      if (data['status'] == true && data['result'] != null) {
+      // Check HTTP status code and response body status field (if it exists)
+      // If status field doesn't exist, treat HTTP 200 as success
+      // If status field exists and is false, treat as error
+      final hasStatusField = data != null &&
+          data is Map &&
+          data.containsKey('status');
+      final isStatusFalse = hasStatusField && data['status'] == false;
+
+      // Check if we have a result with token (successful login)
+      final hasResult = data != null &&
+          data is Map &&
+          data.containsKey('result') &&
+          data['result'] != null;
+
+      if (response.statusCode == 200 &&
+          !isStatusFalse &&
+          hasResult &&
+          data['result'] is Map) {
         // Login successful
         if (!mounted) return;
 
         final result = data['result'] as Map<String, dynamic>;
         final userName = result['full_name'] ?? result['email'] ?? 'User';
         final token = result['token'] ?? '';
+
+        if (token.isEmpty) {
+          // No token in response, login failed
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(data['message'] ?? 'Login failed: No token received'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
 
         // Save user profile data from login response
         await ProfileManager.instance.saveProfileFromAPI(result);
@@ -80,9 +112,10 @@ class _LoginPageState extends State<LoginPage> {
         // Login failed
         if (!mounted) return;
 
+        final errorMessage = data?['message'] ?? 'Login failed';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(data['message'] ?? 'Login failed'),
+            content: Text(errorMessage),
             backgroundColor: Colors.red,
           ),
         );

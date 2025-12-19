@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/login_page.dart';
 import 'screens/main_shell.dart';
 import 'services/session_manager.dart';
@@ -52,7 +53,27 @@ class _RootPageState extends State<RootPage> {
   @override
   void initState() {
     super.initState();
-    _hydrateSession();
+    _initApp();
+  }
+
+  Future<void> _initApp() async {
+    await _checkFirstRun();
+    await _hydrateSession();
+  }
+
+  Future<void> _checkFirstRun() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final isFirstRun = prefs.getBool('is_first_run') ?? true;
+
+      if (isFirstRun) {
+        print('🆕 Fresh install detected: Clearing previous session data');
+        await SessionManager.instance.clearSession();
+        await prefs.setBool('is_first_run', false);
+      }
+    } catch (e) {
+      print('⚠️ Error checking first run: $e');
+    }
   }
 
   Future<void> _hydrateSession() async {

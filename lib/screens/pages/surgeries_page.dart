@@ -18,7 +18,6 @@ class _SurgeriesPageState extends State<SurgeriesPage>
   Set<String> _selectedTypeFilters =
       {}; // Empty = All, can select: 'SURGERY', 'PROCEDURE'
   int _selectedTab = 0; // 0: Scheduled, 1: Unscheduled, 2: Finished
-  int _upcomingDays = 7; // Default: 7 days, options: 7, 30, 180
   final TextEditingController _searchController = TextEditingController();
   bool _isSearchVisible = false;
   bool _isLoading = false;
@@ -75,11 +74,19 @@ class _SurgeriesPageState extends State<SurgeriesPage>
   }
 
   Future<void> _loadAllData({bool isInitialLoad = false}) async {
+    // Reset refreshing flag to allow refresh
+    _isRefreshing = false;
     // Load both surgeries and procedures
     await Future.wait([
       _loadSurgeries(isInitialLoad: isInitialLoad),
       _loadProcedures(isInitialLoad: isInitialLoad),
     ]);
+    // Force a rebuild after data is loaded
+    if (mounted) {
+      setState(() {
+        // Explicitly trigger rebuild with current state
+      });
+    }
   }
 
   Future<void> _loadSurgeries({bool isInitialLoad = false}) async {
@@ -101,9 +108,10 @@ class _SurgeriesPageState extends State<SurgeriesPage>
     }
 
     try {
-      // Load upcoming surgeries (today + upcoming)
+      // Load upcoming surgeries (today + upcoming) - hardcoded to 100 days
+      print('📅 Loading surgeries with upcomingDays: 100');
       final response = await ApiMethods.getTodayUpcomingSurgeries(
-        upcomingDays: _upcomingDays,
+        upcomingDays: 100,
       );
 
       if (response.statusCode == 200 && response.data != null) {
@@ -111,9 +119,34 @@ class _SurgeriesPageState extends State<SurgeriesPage>
         final today = data['today'] as List<dynamic>? ?? [];
         final upcoming = data['upcoming'] as List<dynamic>? ?? [];
 
+        // Parse surgeries and filter out FINISHED/COMPLETED ones from today/upcoming
+        final parsedToday = _parseSurgeries(today);
+        final parsedUpcoming = _parseSurgeries(upcoming);
+
+        // Filter out FINISHED/COMPLETED surgeries from today and upcoming lists
+        // FINISHED surgeries should only appear in the Finished tab
+        final filteredToday = parsedToday.where((surgery) {
+          final status = (surgery['status'] as String? ?? '').toUpperCase();
+          return status != 'COMPLETED' && status != 'FINISHED';
+        }).toList();
+
+        final filteredUpcoming = parsedUpcoming.where((surgery) {
+          final status = (surgery['status'] as String? ?? '').toUpperCase();
+          return status != 'COMPLETED' && status != 'FINISHED';
+        }).toList();
+
         setState(() {
-          _todaySurgeries = _parseSurgeries(today);
-          _upcomingSurgeries = _parseSurgeries(upcoming);
+          // Clear old data first to ensure fresh data
+          _todaySurgeries = [];
+          _upcomingSurgeries = [];
+          // Then set new data
+          _todaySurgeries = filteredToday;
+          _upcomingSurgeries = filteredUpcoming;
+          print('📋 Parsed surgeries:');
+          print('   Today (before filter): ${parsedToday.length}');
+          print('   Today (after filter): ${_todaySurgeries.length}');
+          print('   Upcoming (before filter): ${parsedUpcoming.length}');
+          print('   Upcoming (after filter): ${_upcomingSurgeries.length}');
           _errorMessage = null; // Clear any previous errors
           if (isInitialLoad) {
             _isLoading = false;
@@ -240,9 +273,10 @@ class _SurgeriesPageState extends State<SurgeriesPage>
     }
 
     try {
-      // Load upcoming procedures (today + upcoming)
+      // Load upcoming procedures (today + upcoming) - hardcoded to 100 days
+      print('📅 Loading procedures with upcomingDays: 100');
       final response = await ApiMethods.getTodayUpcomingProcedures(
-        upcomingDays: _upcomingDays,
+        upcomingDays: 100,
       );
 
       if (response.statusCode == 200 && response.data != null) {
@@ -250,9 +284,39 @@ class _SurgeriesPageState extends State<SurgeriesPage>
         final today = data['today'] as List<dynamic>? ?? [];
         final upcoming = data['upcoming'] as List<dynamic>? ?? [];
 
+        print('📋 Procedures API response:');
+        print('   Today procedures: ${today.length}');
+        print('   Upcoming procedures: ${upcoming.length}');
+        print('   Total procedures: ${today.length + upcoming.length}');
+
+        // Parse procedures and filter out COMPLETED ones from today/upcoming
+        final parsedToday = _parseProcedures(today);
+        final parsedUpcoming = _parseProcedures(upcoming);
+
+        // Filter out COMPLETED procedures from today and upcoming lists
+        // COMPLETED procedures should only appear in the Finished tab
+        final filteredToday = parsedToday.where((proc) {
+          final status = (proc['status'] as String? ?? '').toUpperCase();
+          return status != 'COMPLETED' && status != 'FINISHED';
+        }).toList();
+
+        final filteredUpcoming = parsedUpcoming.where((proc) {
+          final status = (proc['status'] as String? ?? '').toUpperCase();
+          return status != 'COMPLETED' && status != 'FINISHED';
+        }).toList();
+
         setState(() {
-          _todayProcedures = _parseProcedures(today);
-          _upcomingProcedures = _parseProcedures(upcoming);
+          // Clear old data first to ensure fresh data
+          _todayProcedures = [];
+          _upcomingProcedures = [];
+          // Then set new data
+          _todayProcedures = filteredToday;
+          _upcomingProcedures = filteredUpcoming;
+          print('📋 Parsed procedures:');
+          print('   Today (before filter): ${parsedToday.length}');
+          print('   Today (after filter): ${_todayProcedures.length}');
+          print('   Upcoming (before filter): ${parsedUpcoming.length}');
+          print('   Upcoming (after filter): ${_upcomingProcedures.length}');
           _errorMessage = null; // Clear any previous errors
           if (isInitialLoad) {
             _isLoading = false;
@@ -294,8 +358,29 @@ class _SurgeriesPageState extends State<SurgeriesPage>
       if (unscheduledResponse.statusCode == 200 &&
           unscheduledResponse.data != null) {
         final unscheduled = unscheduledResponse.data as List<dynamic>? ?? [];
+        print(
+          '📋 Unscheduled procedures API returned ${unscheduled.length} items',
+        );
+
+        // Remove duplicates from API response based on ID
+        final seenIds = <int>{};
+        final uniqueUnscheduled = unscheduled.where((proc) {
+          final id = proc['id'] as int?;
+          if (id == null) return false;
+          if (seenIds.contains(id)) {
+            print('⚠️ Duplicate procedure ID found in API response: $id');
+            return false;
+          }
+          seenIds.add(id);
+          return true;
+        }).toList();
+
+        print(
+          '📋 After deduplication: ${uniqueUnscheduled.length} unique unscheduled procedures',
+        );
+
         setState(() {
-          _unscheduledProcedures = _parseProcedures(unscheduled);
+          _unscheduledProcedures = _parseProcedures(uniqueUnscheduled);
         });
       }
     } catch (e) {
@@ -724,6 +809,17 @@ class _SurgeriesPageState extends State<SurgeriesPage>
       }
     }
 
+    // Remove duplicates based on ID and type
+    final seenIds = <String>{};
+    allData = allData.where((item) {
+      final id = '${item['type']}_${item['id']}';
+      if (seenIds.contains(id)) {
+        return false; // Duplicate found, skip it
+      }
+      seenIds.add(id);
+      return true;
+    }).toList();
+
     // Apply search filter
     if (_searchController.text.isNotEmpty) {
       final query = _searchController.text.toLowerCase();
@@ -884,53 +980,6 @@ class _SurgeriesPageState extends State<SurgeriesPage>
               ],
             ),
           ),
-          // Upcoming days selector (only for Scheduled tab)
-          if (_selectedTab == 0)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
-              child: Row(
-                children: [
-                  Text(
-                    'Upcoming:',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.grey.shade700,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.cardBackground,
-                      borderRadius: BorderRadius.circular(3),
-                      border: Border.all(color: Colors.grey.shade300),
-                    ),
-                    child: DropdownButton<int>(
-                      value: _upcomingDays,
-                      underline: const SizedBox(),
-                      isDense: true,
-                      items: const [
-                        DropdownMenuItem(value: 7, child: Text('7 Days')),
-                        DropdownMenuItem(value: 30, child: Text('1 Month')),
-                        DropdownMenuItem(value: 180, child: Text('6 Months')),
-                      ],
-                      onChanged: (value) {
-                        if (value != null) {
-                          setState(() {
-                            _upcomingDays = value;
-                          });
-                          _loadAllData(isInitialLoad: false);
-                        }
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
           // Content area (Surgeries or Procedures)
           Expanded(
             child: Column(
@@ -1097,6 +1146,11 @@ class _SurgeriesPageState extends State<SurgeriesPage>
         return dateA.compareTo(dateB);
       });
 
+      print('📋 After filtering:');
+      print('   Today items: ${todayItems.length}');
+      print('   Upcoming items: ${upcomingItems.length}');
+      print('   Total to display: ${todayItems.length + upcomingItems.length}');
+
       final isEmpty = todayItems.isEmpty && upcomingItems.isEmpty;
 
       return RefreshIndicator(
@@ -1144,13 +1198,18 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                           status: item['status'] as String?,
                           surgery: item,
                           isTodaysSurgery: true,
-                          onStatusChange: () => _loadAllData(),
+                          onStatusChange: () async {
+                            await _loadAllData();
+                          },
                         );
                       } else {
                         final status = item['status'] as String? ?? '';
+                        final statusUpper = status.toUpperCase();
                         final canChangeStatus =
-                            status.toUpperCase() == 'RESCHEDULED' ||
-                            status.toUpperCase() == 'SCHEDULED';
+                            statusUpper == 'RESCHEDULED' ||
+                            statusUpper == 'SCHEDULED' ||
+                            statusUpper == 'SHEDULED' ||
+                            statusUpper == 'ONGOING';
                         return _buildProcedureCard(
                           item,
                           true,
@@ -1180,9 +1239,12 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                     ...upcomingItems.map((item) {
                       if (item['type'] == 'SURGERY') {
                         final status = item['status'] as String? ?? '';
+                        final statusUpper = status.toUpperCase();
                         final canChangeStatus =
-                            status.toUpperCase() == 'RESCHEDULED' ||
-                            status.toUpperCase() == 'SCHEDULED';
+                            statusUpper == 'RESCHEDULED' ||
+                            statusUpper == 'SCHEDULED' ||
+                            statusUpper == 'SHEDULED' ||
+                            statusUpper == 'ONGOING';
                         return _SurgeryCard(
                           name: item['name'] as String,
                           procedure: item['procedure'] as String,
@@ -1191,19 +1253,26 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                           surgery: item,
                           isTodaysSurgery: false,
                           onStatusChange: canChangeStatus
-                              ? () => _loadAllData()
+                              ? () async {
+                                  await _loadAllData();
+                                }
                               : null,
                         );
                       } else {
                         final status = item['status'] as String? ?? '';
+                        final statusUpper = status.toUpperCase();
                         final canChangeStatus =
-                            status.toUpperCase() == 'RESCHEDULED' ||
-                            status.toUpperCase() == 'SCHEDULED';
+                            statusUpper == 'RESCHEDULED' ||
+                            statusUpper == 'SCHEDULED' ||
+                            statusUpper == 'SHEDULED' ||
+                            statusUpper == 'ONGOING';
                         return _buildProcedureCard(
                           item,
                           false,
                           onStatusChange: canChangeStatus
-                              ? () => _loadAllData()
+                              ? () async {
+                                  await _loadAllData();
+                                }
                               : null,
                         );
                       }
@@ -1271,14 +1340,18 @@ class _SurgeriesPageState extends State<SurgeriesPage>
   Widget _buildProcedureCard(
     Map<String, dynamic> procedure,
     bool isToday, {
-    VoidCallback? onStatusChange,
+    Future<void> Function()? onStatusChange,
   }) {
     final isUnscheduled = _selectedTab == 1;
     final status = procedure['status'] as String? ?? '';
     final statusUpper = status.toUpperCase();
     final canChangeStatus =
         onStatusChange != null &&
-        (isToday || statusUpper == 'RESCHEDULED' || statusUpper == 'SCHEDULED');
+        (isToday ||
+            statusUpper == 'RESCHEDULED' ||
+            statusUpper == 'SCHEDULED' ||
+            statusUpper == 'SHEDULED' ||
+            statusUpper == 'ONGOING');
     final statusChangeCallback = onStatusChange; // Store for use in button
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -1490,7 +1563,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
   void _showProcedureStatusDialog(
     BuildContext context,
     Map<String, dynamic> procedure,
-    VoidCallback onStatusChanged,
+    Future<void> Function() onStatusChanged,
   ) {
     showDialog(
       context: context,
@@ -1505,11 +1578,15 @@ class _SurgeriesPageState extends State<SurgeriesPage>
   Future<void> _showAssignDateDialogForProcedure(
     Map<String, dynamic> procedure,
   ) async {
-    // This will need to be implemented similar to surgery assign dialog
-    // For now, just show a placeholder
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Procedure scheduling dialog coming soon')),
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => _AssignProcedureDateDialog(procedure: procedure),
     );
+
+    if (result != null && mounted) {
+      // Reload all data after assignment
+      await _loadAllData();
+    }
   }
 
   // Old method - kept for reference but not used
@@ -1565,7 +1642,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                         status: surgery['status'] as String?,
                         surgery: surgery,
                         isTodaysSurgery: true,
-                        onStatusChange: () => _loadSurgeries(),
+                        onStatusChange: () => _loadAllData(),
                       ),
                     )
                   else
@@ -1609,7 +1686,7 @@ class _SurgeriesPageState extends State<SurgeriesPage>
                         status: surgery['status'] as String?,
                         surgery: surgery,
                         isTodaysSurgery: true,
-                        onStatusChange: () => _loadSurgeries(),
+                        onStatusChange: () => _loadAllData(),
                       ),
                     ),
                   ],
@@ -1669,27 +1746,6 @@ class _SurgeriesPageState extends State<SurgeriesPage>
     }
   }
   */
-
-  List<Map<String, dynamic>> _applySearchFilter(
-    List<Map<String, dynamic>> surgeries,
-  ) {
-    if (_searchController.text.isEmpty) {
-      return surgeries;
-    }
-
-    final query = _searchController.text.toLowerCase();
-    return surgeries.where((surgery) {
-      final name = (surgery['name'] as String? ?? '').toLowerCase();
-      final procedure = (surgery['procedure'] as String? ?? '').toLowerCase();
-      final date = (surgery['formatted_date'] as String? ?? '').toLowerCase();
-      final status = (surgery['status'] as String? ?? '').toLowerCase();
-
-      return name.contains(query) ||
-          procedure.contains(query) ||
-          date.contains(query) ||
-          status.contains(query);
-    }).toList();
-  }
 
   Future<void> _showAssignDateDialog(Map<String, dynamic> surgery) async {
     final result = await showDialog<Map<String, dynamic>>(
@@ -1761,7 +1817,7 @@ class _SurgeryCard extends StatelessWidget {
   final String? status;
   final Map<String, dynamic>? surgery;
   final bool isTodaysSurgery;
-  final VoidCallback? onStatusChange;
+  final Future<void> Function()? onStatusChange;
 
   @override
   Widget build(BuildContext context) {
@@ -1847,7 +1903,9 @@ class _SurgeryCard extends StatelessWidget {
                           (isTodaysSurgery ||
                               (status != null &&
                                   (status!.toUpperCase() == 'RESCHEDULED' ||
-                                      status!.toUpperCase() == 'SCHEDULED'))) &&
+                                      status!.toUpperCase() == 'SCHEDULED' ||
+                                      status!.toUpperCase() == 'SHEDULED' ||
+                                      status!.toUpperCase() == 'ONGOING'))) &&
                           onStatusChange != null)
                         ElevatedButton(
                           onPressed: () => _showStatusDialog(context),
@@ -1877,7 +1935,9 @@ class _SurgeryCard extends StatelessWidget {
                           !isTodaysSurgery &&
                           status != null &&
                           status!.toUpperCase() != 'RESCHEDULED' &&
-                          status!.toUpperCase() != 'SCHEDULED')
+                          status!.toUpperCase() != 'SCHEDULED' &&
+                          status!.toUpperCase() != 'SHEDULED' &&
+                          status!.toUpperCase() != 'ONGOING')
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,
@@ -2090,7 +2150,18 @@ class _AssignDateDialogState extends State<_AssignDateDialog> {
         surgeryDate: isoDate,
       );
 
-      if (response.statusCode == 200 && mounted) {
+      print('✅ Assign Date API Response Status: ${response.statusCode}');
+      print('✅ Assign Date API Response Data: ${response.data}');
+
+      // Check HTTP status code and response body status field (if it exists)
+      // If status field doesn't exist, treat HTTP 200 as success
+      // If status field exists and is false, treat as error
+      final hasStatusField = response.data != null &&
+          response.data is Map &&
+          response.data.containsKey('status');
+      final isStatusFalse = hasStatusField && response.data['status'] == false;
+
+      if (response.statusCode == 200 && !isStatusFalse && mounted) {
         Navigator.of(context).pop({'success': true});
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -2099,7 +2170,10 @@ class _AssignDateDialogState extends State<_AssignDateDialog> {
           ),
         );
       } else {
-        throw Exception('Failed to assign date');
+        // Extract error message from response body
+        final errorMsg = response.data?['message'] ??
+            'Failed to assign date';
+        throw Exception(errorMsg);
       }
     } catch (e) {
       print('Error assigning date: $e');
@@ -2250,6 +2324,280 @@ class _AssignDateDialogState extends State<_AssignDateDialog> {
   }
 }
 
+class _AssignProcedureDateDialog extends StatefulWidget {
+  const _AssignProcedureDateDialog({required this.procedure});
+
+  final Map<String, dynamic> procedure;
+
+  @override
+  State<_AssignProcedureDateDialog> createState() =>
+      _AssignProcedureDateDialogState();
+}
+
+class _AssignProcedureDateDialogState
+    extends State<_AssignProcedureDateDialog> {
+  DateTime? _selectedDate;
+  TimeOfDay? _selectedTime;
+  bool _isLoading = false;
+
+  Future<void> _selectDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: AppColors.primary,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: AppColors.textPrimary,
+            ),
+            dialogBackgroundColor: Colors.white,
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDate = picked;
+      });
+    }
+  }
+
+  Future<void> _selectTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: AppColors.primary,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: AppColors.textPrimary,
+            ),
+            dialogBackgroundColor: Colors.white,
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedTime = picked;
+      });
+    }
+  }
+
+  Future<void> _assignDate() async {
+    if (_selectedDate == null || _selectedTime == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select both date and time'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Combine date and time into ISO 8601 format
+      final dateTime = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+        _selectedTime!.hour,
+        _selectedTime!.minute,
+      );
+      final isoDate = dateTime.toIso8601String().split(
+        '.',
+      )[0]; // Remove milliseconds
+
+      final procedureId = widget.procedure['id'] as int;
+      final response = await ApiMethods.assignProcedureDate(
+        procedureId: procedureId,
+        scheduledDate: isoDate,
+      );
+
+      print('✅ Assign Date API Response Status: ${response.statusCode}');
+      print('✅ Assign Date API Response Data: ${response.data}');
+
+      // Check both HTTP status code AND response body status field
+      if (response.statusCode == 200 &&
+          response.data != null &&
+          response.data['status'] == true &&
+          mounted) {
+        Navigator.of(context).pop({'success': true});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Procedure date assigned successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        // Extract error message from response body
+        final errorMsg = response.data?['message'] ??
+            'Failed to assign date';
+        throw Exception(errorMsg);
+      }
+    } catch (e) {
+      print('Error assigning procedure date: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.white,
+      title: Text(
+        'Assign Procedure Date',
+        style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold),
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Patient: ${widget.procedure['name']}',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 24),
+            // Date picker
+            InkWell(
+              onTap: _selectDate,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Date',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _selectedDate != null
+                              ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+                              : 'Select date',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Icon(Icons.calendar_today, color: AppColors.primary),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Time picker
+            InkWell(
+              onTap: _selectTime,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Time',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _selectedTime != null
+                              ? _selectedTime!.format(context)
+                              : 'Select time',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Icon(Icons.access_time, color: AppColors.primary),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+          child: Text('Cancel', style: TextStyle(color: Colors.grey.shade700)),
+        ),
+        ElevatedButton(
+          onPressed: _isLoading ? null : _assignDate,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          child: _isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('Assign'),
+        ),
+      ],
+    );
+  }
+}
+
 class _StatusDialog extends StatefulWidget {
   const _StatusDialog({
     required this.surgery,
@@ -2259,7 +2607,7 @@ class _StatusDialog extends StatefulWidget {
 
   final Map<String, dynamic> surgery;
   final String? currentStatus;
-  final VoidCallback onStatusChanged;
+  final Future<void> Function() onStatusChanged;
 
   @override
   State<_StatusDialog> createState() => _StatusDialogState();
@@ -2292,17 +2640,34 @@ class _StatusDialogState extends State<_StatusDialog> {
         status: _selectedStatus!,
       );
 
-      if (response.statusCode == 200 && mounted) {
+      print('✅ API Response Status: ${response.statusCode}');
+      print('✅ API Response Data: ${response.data}');
+
+      // Check HTTP status code and response body status field (if it exists)
+      // If status field doesn't exist, treat HTTP 200 as success
+      // If status field exists and is false, treat as error
+      final hasStatusField = response.data != null &&
+          response.data is Map &&
+          response.data.containsKey('status');
+      final isStatusFalse = hasStatusField && response.data['status'] == false;
+
+      if (response.statusCode == 200 && !isStatusFalse && mounted) {
         Navigator.of(context).pop();
-        widget.onStatusChanged();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Status updated to $_selectedStatus'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        // Await the callback to ensure data is refreshed
+        await widget.onStatusChanged();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Status updated to $_selectedStatus'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       } else {
-        throw Exception('Failed to update status');
+        // Extract error message from response body
+        final errorMsg = response.data?['message'] ??
+            'Failed to update status';
+        throw Exception(errorMsg);
       }
     } catch (e) {
       print('Error updating status: $e');
@@ -2646,7 +3011,18 @@ class _RescheduleDialogState extends State<_RescheduleDialog> {
         reason: _reasonController.text.trim(),
       );
 
-      if (response.statusCode == 200 && mounted) {
+      print('✅ Reschedule API Response Status: ${response.statusCode}');
+      print('✅ Reschedule API Response Data: ${response.data}');
+
+      // Check HTTP status code and response body status field (if it exists)
+      // If status field doesn't exist, treat HTTP 200 as success
+      // If status field exists and is false, treat as error
+      final hasStatusField = response.data != null &&
+          response.data is Map &&
+          response.data.containsKey('status');
+      final isStatusFalse = hasStatusField && response.data['status'] == false;
+
+      if (response.statusCode == 200 && !isStatusFalse && mounted) {
         Navigator.of(context).pop();
         widget.onRescheduled();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2656,7 +3032,10 @@ class _RescheduleDialogState extends State<_RescheduleDialog> {
           ),
         );
       } else {
-        throw Exception('Failed to reschedule surgery');
+        // Extract error message from response body
+        final errorMsg = response.data?['message'] ??
+            'Failed to reschedule surgery';
+        throw Exception(errorMsg);
       }
     } catch (e) {
       print('Error rescheduling surgery: $e');
@@ -2821,7 +3200,7 @@ class _ProcedureStatusDialog extends StatefulWidget {
 
   final Map<String, dynamic> procedure;
   final String? currentStatus;
-  final VoidCallback onStatusChanged;
+  final Future<void> Function() onStatusChanged;
 
   @override
   State<_ProcedureStatusDialog> createState() => _ProcedureStatusDialogState();
@@ -2862,17 +3241,30 @@ class _ProcedureStatusDialogState extends State<_ProcedureStatusDialog> {
       print('✅ API Response Status: ${response.statusCode}');
       print('✅ API Response Data: ${response.data}');
 
-      if (response.statusCode == 200 && mounted) {
+      // Check HTTP status code and response body status field (if it exists)
+      // If status field doesn't exist, treat HTTP 200 as success
+      // If status field exists and is false, treat as error
+      final hasStatusField = response.data != null &&
+          response.data is Map &&
+          response.data.containsKey('status');
+      final isStatusFalse = hasStatusField && response.data['status'] == false;
+
+      if (response.statusCode == 200 && !isStatusFalse && mounted) {
         Navigator.of(context).pop();
-        widget.onStatusChanged();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Status updated to $_selectedStatus'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        // Await the callback to ensure data is refreshed
+        await widget.onStatusChanged();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Status updated to $_selectedStatus'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       } else {
-        final errorMsg = response.data?['message'] ?? 'Failed to update status';
+        // Extract error message from response body
+        final errorMsg = response.data?['message'] ??
+            'Failed to update status';
         throw Exception(errorMsg);
       }
     } catch (e) {
